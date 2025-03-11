@@ -1,0 +1,2426 @@
+<?php
+namespace App\Http\Controllers\lab\visit;
+use App\Http\Controllers\Controller;
+
+use App\Models\Doctor;
+use App\Models\DoctorSignature;
+use App\Models\Clinic;
+use App\Models\Patient;
+use App\Models\User;
+use App\Models\TblVisits;
+use App\Models\ExtLab;
+use App\Models\LabTests;
+use App\Models\LabOrders;
+use App\Models\LabResults;
+use App\Models\DOCSResults;
+use App\Models\TblBillHead;
+use App\Models\TblBillSpecifics;
+use App\Models\TblBillCurrency;
+use App\Models\TblBillRate;
+use App\Models\ExtIns;
+
+use Carbon\Carbon;
+
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
+use Illuminate\Http\Request;
+use Alert;
+use DataTables;
+use DomDocument;
+use UserHelper;
+
+use PDF;
+use Image;
+use Webklex\PDFMerger\Facades\PDFMergerFacade as PDFMerger;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\SettingMailAttach;
+use Storage;
+use App\Models\TblBillPayment;
+use App\Models\TblBillPaymentMode;
+use Session;
+use Illuminate\Support\Facades\View;
+//use ArPHP\I18N\Arabic;
+use Dompdf\Canvas;
+use Dompdf\Options;
+
+class VisitController extends Controller
+{
+    
+	public function __construct()
+    {
+        $this->middleware('auth');
+    }
+	
+	public function index($lang,Request $request) 
+    {
+	   
+	   $type=auth()->user()->type;	
+	   
+	   $myId = auth()->user()->id;
+	   $idClinic = auth()->user()->clinic_num; 
+	   
+	   if($type==1){
+		$ext_labs=Doctor::select('doctor_user_num as user_num',DB::raw("CONCAT(first_name,IFNULL(CONCAT(' ',middle_name,' '),' '),last_name) as full_name"))->where('doctor_user_num',$myId)->get();
+        $Patients = Patient::where('clinic_num',$idClinic)->where('ext_lab',$myId)->where('status','O')->orderBy('id','desc')->get();
+				 
+	   }
+	   
+	   if($type==3){
+		$ext_labs=ExtLab::select('lab_user_num as user_num','full_name')->where('lab_user_num',$myId)->get();
+	    $Patients = Patient::where('clinic_num',$idClinic)->where('ext_lab',$myId)->where('status','O')->orderBy('id','desc')->get();
+
+	   }
+	   
+	   if($type==2){
+		$ext_labs1=Doctor::select('doctor_user_num as user_num',DB::raw("CONCAT(first_name,IFNULL(CONCAT(' ',middle_name,' '),' '),last_name) as full_name"))->whereNOTNULL('doctor_user_num');
+	    $ext_labs=ExtLab::select('lab_user_num as user_num','full_name')->whereNOTNULL('lab_user_num')->union($ext_labs1)->get();
+		$Patients = Patient::where('clinic_num',$idClinic)->where('status','O')->orderBy('id','desc')->get();
+			 
+	   }
+		
+		$clinics = Clinic::find($idClinic);
+		$lab_tests = LabTests::where('clinic_num',$idClinic)->where('active','Y')
+					 ->orderBy('id','desc')->get();
+		
+		if ($request->ajax()) {
+           
+			$filter_date= "";
+				
+			
+			if( ($request->filter_fromdate!="" &&  $request->filter_fromdate!=NULL)
+				&& ($request->filter_todate=="" || $request->filter_todate==NULL) ){
+			     $filter_date= "and DATE(tbl_visits_orders.order_datetime) >= '".$request->filter_fromdate."' ";
+				}
+			
+			if( ($request->filter_todate!="" &&  $request->filter_todate!=NULL)
+				&& ($request->filter_fromdate=="" || $request->filter_fromdate==NULL) ){
+			     $filter_date= "and DATE(tbl_visits_orders.order_datetime) <= '".$request->filter_todate."' ";
+				}	
+				
+			if( ($request->filter_fromdate!="" &&  $request->filter_fromdate!=NULL)
+				&& ($request->filter_todate!="" &&  $request->filter_todate!=NULL) ){
+			     $filter_date = "and DATE(tbl_visits_orders.order_datetime) BETWEEN '".$request->filter_fromdate."' AND '".$request->filter_todate."'";
+				}	
+				
+           	
+			$filter_patient="";
+           	if(isset($request->filter_patient) && $request->filter_patient!="0" ){
+			 $filter_patient = "and tbl_visits_orders.patient_num='".$request->filter_patient."' ";
+			
+		      }
+		    
+					   
+		    $filter_test_codes="";
+           	if(isset($request->filter_test_codes) && $request->filter_test_codes!="0" ){
+			 $tst_id = $request->filter_test_codes;
+			 
+			 $order_ids = LabOrders::where(function($q) use($tst_id){
+				 $q->whereJsonContains('chosen_codes',intval($tst_id))
+				   ->orwhereJsonContains('tests',intval($tst_id));
+			      })->pluck('id')->toArray();
+			 
+			 if(count($order_ids )){
+			    $filter_test_codes = "and tbl_visits_orders.id IN (".implode(',',$order_ids ).") ";
+				
+		     }else{
+				 $filter_test_codes = "and tbl_visits_orders.id=0"; 
+			 }
+			 }
+			 
+		   $filter_ext_lab="";
+		    if(isset($request->ext_lab) && $request->ext_lab=="-1" ){
+			$filter_ext_lab="and tbl_visits_orders.ext_lab IS NULL";
+           	}
+			if(isset($request->ext_lab) && $request->ext_lab!="0" && $request->ext_lab!="-1"  ){
+			 $filter_ext_lab = "and tbl_visits_orders.ext_lab='".$request->ext_lab."' ";  
+		     }
+			 
+			
+			 
+			 $filter_status="";
+			 if(isset($request->filter_status)){
+			 $filter_status = "and tbl_visits_orders.active='".$request->filter_status."' ";  
+		     }
+			 
+			 $filter_order="";
+			 if(auth()->user()->type==1 || auth()->user()->type==3){
+				 $filter_order="and (tbl_visits_orders.status='P' or tbl_visits_orders.status='V')"; 
+			 }
+			 if(isset($request->filter_order) && $request->filter_order!='0'){
+			     if($request->filter_order=='NF'){
+				   $filter_order = "and (r.result='' or r.result IS NULL)";   	 
+				 }else{
+				   $filter_order = "and tbl_visits_orders.status='".$request->filter_order."' ";  
+				 }
+			 }
+			 
+			 
+			 $filter_patient_tel="";
+			 if(isset($request->filter_patient_tel) && $request->filter_patient_tel!="" ){
+			 $v1 = "%".str_replace("-","",$request->filter_patient_tel)."%";
+			 $filter_patient_tel = "and ( patConsult.first_phone LIKE '".$v1."'  or patConsult.cell_phone LIKE '".$v1."') ";  
+		     }
+		   
+			 
+			
+            $arr = array('from_date'=>isset($request->filter_fromdate)?$request->filter_fromdate:'',
+			             'to_date'=>isset($request->filter_todate)?$request->filter_todate:'',
+			             'status'=>$request->filter_status,'patient_num'=>$request->filter_patient,
+						 'clinic_num'=>$request->clinic_num,'ext_lab'=>$request->ext_lab,
+						 'filter_patient_tel'=>$request->filter_patient_tel,'lab_code'=>$request->filter_test_codes);
+			UserHelper::drop_session_keys($arr);	
+			UserHelper::generate_session_keys($arr);			
+		    
+           
+		   $sql="select DISTINCT(tbl_visits_orders.id) as order_id,DATE_FORMAT(tbl_visits_orders.order_datetime,'%Y-%m-%d %H:%i') as visit_date_time,
+		          clin.full_name as ClinicName,IFNULL(CONCAT(doc.first_name,' ',doc.last_name),'') AS ProName,
+				  tbl_visits_orders.active,tbl_visits_orders.status,tbl_visits_orders.chosen_codes,
+		          CONCAT(patConsult.first_name,' ',IFNULL(patConsult.middle_name,''),' ',patConsult.last_name,',',IFNULL(patConsult.birthdate,''),',',IFNULL(patConsult.cell_phone,'')) AS patDetail,
+				  IFNULL(l.full_name,IFNULL(CONCAT(doc.first_name,IFNULL(CONCAT(' ',doc.middle_name,' '),' '),doc.last_name),'')) as ext_lab_name,
+				  IF(tbl_visits_orders.status='P','".__("Pending")."',IF(tbl_visits_orders.status='F','".__("Finished")."',IF(tbl_visits_orders.status='V','".__("Validated")."','".__("Undefined")."'))) as order_status
+				  from tbl_visits_orders 
+				  INNER JOIN tbl_patients as patConsult on patConsult.id=tbl_visits_orders.patient_num
+				  INNER JOIN tbl_clinics as clin on clin.id=tbl_visits_orders.clinic_num 
+				  LEFT JOIN tbl_visits_order_results as r ON r.order_id = tbl_visits_orders.id 
+				  LEFT JOIN tbl_doctors as doc on doc.doctor_user_num=tbl_visits_orders.ext_lab
+                  LEFT JOIN tbl_external_labs as l on l.lab_user_num=tbl_visits_orders.ext_lab				  
+				  where tbl_visits_orders.clinic_num=".$idClinic." ".$filter_status."  ".$filter_patient."  ".$filter_date."  ".$filter_ext_lab." ".$filter_order." ".$filter_patient_tel." ".$filter_test_codes."
+				  ";
+				//dd($sql);  
+		     $visits= DB::select(DB::raw("$sql"));
+		     
+           //dd($visits);
+            return Datatables::of($visits)
+
+                    ->addIndexColumn()
+
+                    ->addColumn('action', function($row){
+                           $checked = ($row->active=='Y')?'checked':'';
+                           $disabled = ($row->active=='Y')?'':'disabled';
+						   $access_delete_order = UserHelper::can_access(auth()->user(),'delete_request');
+						   $access_send_results = UserHelper::can_access(auth()->user(),'send_results');
+						   $btn = '<a href="'.route('lab.visit.edit',[app()->getLocale(),$row->order_id]).'"  title="'.__("edit").'" class="btn btn-md btn-clean btn-icon  editVisit '.$disabled.'"><i class="far fa-edit text-primary"></i></a>';                     
+						   $btn .= '<a href="javascript::void(0)"  title="'.__("Download Result").'" class="btn btn-md btn-clean btn-icon   '.$disabled.'" onclick="event.preventDefault();printPDF('.$row->order_id.')"><i class="far fa-file-pdf text-primary"></i></a>';                     
+						   
+						   if($row->status=='V' && $access_send_results){
+   						    $btn .= '<a href="javascript::void(0)"  title="'.__("Email Result").'" class="btn btn-md btn-clean btn-icon  '.$disabled.'" onclick="event.preventDefault();sendPDF('.$row->order_id.')"><i class="far fa-envelope text-primary"></i></a>';                     
+						   }
+						   if($access_delete_order){
+						   $btn.='  <label class="mt-2 slideon slideon-xs  slideon-success"><input type="checkbox" data-id="'.$row->order_id.'" class="toggle-chk" '.$checked.'><span class="slideon-slider"></span></label>';
+                           }
+						   return $btn;
+
+                         })
+					 ->addColumn('test_names', function($row){
+						
+						 $code = LabTests::whereIn('id',json_decode($row->chosen_codes, true))->pluck('test_name')->toArray();
+						 $text = implode(",",$code);
+						 if(strlen($text)>50){
+							$res='<div class="content-container"><span class="truncated-content">'.rtrim(substr($text,0,50)).'</span><span class="load-more-btn" onclick="event.preventDefault();loadMore(this);"><i title="{{__("More")}}" class="fas fa-plus text-primary"></i></span><span class="full-content" style="display:none;">'.$text.'</span><span class="load-less-btn" onclick="event.preventDefault();loadLess(this);" style="display:none;"><i title="{{__("Less")}}" class="fas fa-minus text-primary"></i></span></div>';
+                             return $res;
+						 }else{
+							 return $text;
+						 }
+						
+					 })	 
+
+                    ->rawColumns(['action','test_names'])
+					
+                    ->make(true);
+
+        }
+	   
+     
+	   return view('lab.visit.index')->with(['clinics'=>$clinics,'ext_labs'=>$ext_labs,
+	                                         'Patients'=>$Patients,'lab_tests'=>$lab_tests]); 
+	  										
+	    		
+}
+
+
+public function create($lang,Request $request)
+    {
+		
+		$patient_num = $request->patient;
+		$date_visit = $request->date_visit;
+		$clinic_num = $request->clinic;
+		$ext_lab = (isset($request->ext_lab_num) && $request->ext_lab_num!='0')?$request->ext_lab_num:NULL;
+		
+		Session::forget('order_patient_num');
+		Session::forget('order_clinic_num');
+		Session::forget('order_date_time');
+		Session::forget('order_ext_lab');
+		
+		Session::put('order_patient_num',$patient_num);
+		Session::put('order_clinic_num',$clinic_num);
+		Session::put('order_date_time',$date_visit);
+		Session::put('order_ext_lab',$ext_lab);
+		
+		
+		$location= route('lab.visit.edit',$lang);
+        
+		return response()->json(["success"=>true,"location"=>$location]);
+				
+    }
+	
+public function edit($lang,$id=NULL)
+    {
+		$order = isset($id)?LabOrders::find($id):NULL;
+		
+		$patient_num = isset($order)?$order->patient_num:Session::get('order_patient_num');
+	   	$patient = Patient::where('status','O')->where('id',$patient_num)->first();
+		
+		$id_clinic = isset($order)?$order->clinic_num:Session::get('order_clinic_num');
+		$clinic = Clinic::where('id',$id_clinic)->first();
+		
+		
+		$user_num = auth()->user()->id;
+		$user_type= auth()->user()->type;
+	    
+		if($user_type==1){
+		$ext_labs=Doctor::select('doctor_user_num as user_num',DB::raw("CONCAT(first_name,IFNULL(CONCAT(' ',middle_name,' '),' '),last_name) as full_name"))->where('doctor_user_num',$user_num)->get();
+        }
+		if($user_type==3){
+		$ext_labs=ExtLab::select('lab_user_num as user_num','full_name')->where('lab_user_num',$user_num)->get();
+		}
+		if($user_type==2){
+		$ext_labs1=Doctor::select('doctor_user_num as user_num',DB::raw("CONCAT(first_name,IFNULL(CONCAT(' ',middle_name,' '),' '),last_name) as full_name"))->whereNOTNULL('doctor_user_num');
+		$ext_labs=ExtLab::select('lab_user_num as user_num','full_name')->whereNOTNULL('lab_user_num')->union($ext_labs1)->get();
+		}
+		
+		$currencyUSD=TblBillCurrency::where('active','O')->where('abreviation','USD')->first();
+		$currencyEURO=TblBillCurrency::where('active','O')->where('abreviation','EUR')->first();
+		$lbl_usd = isset($currencyUSD)?$currencyUSD->price:15000;
+		$lbl_euro = isset($currencyEURO)?$currencyEURO->price:15000;
+		$categories = DB::table('tbl_lab_categories')->where('active','Y')->orderBy('testord')->orderBy('id','desc')->get();
+		$profiles = DB::table('tbl_lab_tests_profiles')->where('clinic_num',$id_clinic)->where('active','Y')->get();
+		
+		
+		$order_tests = NULL;
+		$documents = collect();
+		$order_grps = array();
+		$ReqPatient = NULL;
+		$ReqPay = collect();
+		$ReqRef = collect();
+		$cptpCount= $ReqPay->count();
+		$cptrCount= $ReqRef->count();
+		$methodepay = collect();
+		$rates = collect();
+		$currencys = collect();
+		$profile_ids = array();
+		
+		$pay = $refund = $balance = $totalf = $stotal = $etotal = 0.00;
+		
+		if(isset($order)){
+		  $documents = DOCSResults::where('order_id',$order->id)->where('active','Y')->get();
+		  $ReqPatient = TblBillHead::where('order_id',$order->id)->where('status','O')->first();
+         
+		  $arr1 = isset($order->chosen_codes)?json_decode($order->chosen_codes,true):array();
+		 //dd($profiles);
+		  foreach($profiles as $p){
+			$arr2 = json_decode($p->profile_tests,true);
+			//dd($arr2);
+			if(empty(array_diff($arr2,$arr1))){
+				array_push($profile_ids,$p->id);
+			}
+		  }
+		  }
+          
+		  //billing data 
+		 if(isset($order) && isset($ReqPatient)){ 
+		  $ReqPay=DB::table('tbl_bill_payment')
+		          ->join('tbl_bill_payment_mode', 'tbl_bill_payment_mode.id', '=', 'tbl_bill_payment.reference')
+                  ->where('tbl_bill_payment_mode.status', 'O')
+                  ->where('tbl_bill_payment.status','Y')
+			      ->where('bill_num',$ReqPatient->id)
+			      ->where('payment_type','P')
+                  ->get(['tbl_bill_payment.*', 'tbl_bill_payment_mode.name_fr']);
+		 
+		   $cptpCount= $ReqPay->count();
+	    
+		 $ReqRef=DB::table('tbl_bill_payment')
+		          ->join('tbl_bill_payment_mode', 'tbl_bill_payment_mode.id', '=', 'tbl_bill_payment.reference')
+                  ->where('tbl_bill_payment_mode.status', 'O')
+                  ->where('tbl_bill_payment.status','Y')
+			      ->where('bill_num',$ReqPatient->id)
+			      ->where('payment_type','R')
+                  ->get(['tbl_bill_payment.*', 'tbl_bill_payment_mode.name_fr']);
+		   $cptrCount = $ReqRef->count();
+	 	 
+		 $methodepay = DB::table('tbl_bill_payment_mode')->select('id','name_eng as name')->where('clinic_num',$ReqPatient->clinic_num)->where('status','O')->orderBy('id','desc')->get();
+		 $pay = DB::table('tbl_bill_payment')->where('bill_num', '=', $ReqPatient->id)->where('payment_type', '=', 'P')->where('status', '=', 'Y')->sum('lpay_amount');
+	     $refund = DB::table('tbl_bill_payment')->where('bill_num', '=', $ReqPatient->id)->where('payment_type', '=', 'R')->where('status', '=', 'Y')->sum('lpay_amount');
+		 $balance=$ReqPatient->bill_balance;
+		 $stotal=$ReqPatient->bill_total;
+	     $totalf=$ReqPatient->lbill_total;
+		 $etotal=$ReqPatient->ebill_total;
+	     $totalf=number_format((float)$totalf, 2, '.', ',');
+         $stotal=number_format((float)$stotal, 2, '.', ',');
+         $etotal=number_format((float)$etotal, 2, '.', ',');			 
+         $balance=number_format((float)$balance, 2, '.', ',');			  
+	     $rates = TblBillRate::where('status','O')->get();
+	     $currencys=TblBillCurrency::where('active','O')->get();
+		 } 
+		
+		if(isset($order) && isset($order->tests)){
+		  $order_tests = json_decode($order->chosen_codes,true);
+         
+		}
+		
+		
+		$num = -1;
+		
+		$groups = LabTests::where('active','Y')
+				 ->where('is_group','Y')
+				 ->orderBy('testord')
+				 ->get();
+		
+		$tests= LabTests::select('id','test_name','is_group')
+		         ->where('active','Y')
+				 ->whereRaw('is_group = "Y" or (is_group <> "Y" and cnss IS NOT NULL)')
+				 ->orderBy('testord')
+				 ->get();
+		
+		return view('lab.visit.Visits')->with(['patient'=>$patient,'clinic'=>$clinic,
+											   'ext_labs'=>$ext_labs,'tests'=>$tests,
+											   'order'=>$order,'order_tests'=>$order_tests,
+											   'groups'=>$groups,'documents'=>$documents,
+											   'lbl_usd'=>$lbl_usd,'lbl_euro'=>$lbl_euro,
+											   'currencys'=>$currencys,'ReqPay'=>$ReqPay,'ReqRef'=>$ReqRef,
+											   'totalf'=>$totalf,'stotal'=>$stotal,'etotal'=>$etotal,
+											   'cptrCount'=>$cptrCount,'cptpCount'=>$cptpCount,
+											   'ReqPatient'=>$ReqPatient,'methodepay'=>$methodepay,
+											   'balance'=>$balance,'pay'=>$pay,'refund'=>$refund,'rates'=>$rates,
+											   'categories'=>$categories,'profiles'=>$profiles,
+											   'profile_ids'=>$profile_ids
+											   ]);
+		
+    }
+	
+public function getResult($lang,Request $request){
+	$order_id = $request->filter_order;
+	$results = collect();
+	if($order_id != '0'){
+	$order = LabOrders::find($order_id);
+		
+	$results = DB::table('tbl_visits_order_results as r')
+	               ->select('r.id',DB::raw("IF(t.test_code IS NOT NULL and t.test_code <>'',CONCAT(t.test_name,' ','(',' ',t.test_code,' ',')'),t.test_name) as test_name"),
+				            DB::raw("IFNULL(g.test_name,'Not group') as group_name"),
+							DB::raw("IFNULL(t.unit,'') as unit"),
+							't.test_type','r.test_id','t.dec_pts',
+							DB::raw("IFNULL(t.normal_value,'') as range_val"),
+							DB::raw("IFNULL(r.result,'') as result"),
+							DB::raw("IF(o.status='F','Finished',IF(o.status='P','Pending','Validated')) as status"),
+							't.testord as position','r.result_status',
+							DB::raw("IFNULL(prev.result,'') as prev_result"),
+							DB::raw("IFNULL(concat(ext.id,'-',ext.full_name),'') as referred_tests"),
+							DB::raw("IFNULL(r.field_num,'') as field_num"),
+							DB::raw("IFNULL(r.sign,'') as sign"),
+							'r.ref_range','r.calc_result','r.calc_unit','t.is_printed'
+							)
+				   ->join('tbl_lab_tests as t',function($q){
+					   $q->on('t.id','r.test_id');
+					   $q->where('t.is_group','<>','Y');
+				   })
+				   ->join('tbl_visits_orders as o','o.id','r.order_id')
+				   ->leftjoin('tbl_lab_tests as g',function($q){
+				               $q->on('g.id','t.group_num');
+							   $q->where('g.is_group','Y');
+							   $q->where('g.active','Y');
+				          })
+				  ->leftjoin('tbl_visits_order_results as prev','prev.id','r.prev_result_num')
+				  ->leftjoin('tbl_external_labs as ext','ext.id','r.referred_tests')
+				  ->where('r.active','Y')
+                  ->where('r.order_id',$order_id)
+	              ->orderBy('g.testord')
+				  ->orderBy('t.testord')->get();
+	}
+	return response()->json($results);
+}
+
+public function getBill($lang,Request $request){
+  $order_id = $request->filter_order;
+  $bill_head = TblBillHead::where('order_id',$order_id)->where('status','O')->first();
+  
+  $bill = collect();
+  if(isset($bill_head)){
+	 $bill = DB::table('tbl_bill_head as h')
+	         ->select(DB::raw('IFNULL(s.bill_name,"No Name") as bill_name'),'s.cnss',DB::raw("DATE(h.bill_datein) as bill_datein"),
+			          's.bill_price','s.bill_quantity','s.lbill_price','s.ebill_price',
+					  'h.clinic_bill_num','s.bill_num','s.bill_code',
+					  DB::raw("s.bill_price/s.bill_quantity as test_cost")
+					  )
+	         ->join('tbl_bill_specifics as s',function($q){
+				 $q->on('s.bill_num','h.id');
+				 $q->where('s.status','O');
+				 })
+			 ->where('h.id',$bill_head->id)
+			 ->distinct()
+			 ->get();	  
+	}
+	//dd($bill);
+ return response()->json($bill);	
+}
+
+public function checkResultVal($lang,Request $request){
+	$id = $request->id;
+	//result value for test
+	$val = $request->result;
+	//fields for normal test
+	$state = 'U';
+	$sign = '';
+	$field_num = isset($request->field_num) && $request->field_num!=''?$request->field_num:'';
+	$min='';
+	$max='';
+	$calc_result='';
+	$calc_unit='';
+	$is_formula = $request->is_formula;
+	
+	$formula_result ='';
+	
+	if($is_formula=='F'){
+		$formula_test_id = $request->test_id;
+	    $all_tests = $request->all_tests;
+		
+	   //get formula data
+	   if(isset($formula_test_id) && $formula_test_id!='' ){
+		   
+		$formula_result = $this->evaluateFormula($formula_test_id,$all_tests);
+		if($formula_result !='' && is_numeric($formula_result)){
+			$formula_states = $this->getTestState($id,$formula_result,$field_num);
+			if(count($formula_states)){
+			  $state = $formula_states["state"];
+			  $sign = $formula_states["sign"];
+			  $field_num = $formula_states["field_num"];
+			  $min = $formula_states["min"];
+			  $max = $formula_states["max"];
+			 }
+		}
+	   }
+	}
+	
+	if($is_formula=='C'){
+		$formula_test_id = $request->test_id;
+	    $all_tests = $request->all_tests;
+		//get formula data
+	   if(isset($formula_test_id) && $formula_test_id!='' ){
+		     $arr = $this->evaluateCalcFormula($formula_test_id,$all_tests);
+			 if(count($arr)){
+				 $calc_result=$arr["calc_result"];
+				 $calc_unit=$arr["calc_unit"];
+			 }
+		
+			if($val!='' && is_numeric($val)){
+			  $test_states = $this->getTestState($id,$val,$field_num);
+				if(count($test_states)){
+				  $state = $test_states["state"];
+				  $sign = $test_states["sign"];
+				  $field_num = $test_states["field_num"];
+				  $max = $test_states["max"];
+				  $min = $test_states["min"];
+				 }
+		     }
+		
+	   }
+	}
+	
+	
+	if($is_formula=='N'){
+		if($val=='' || is_numeric($val)){
+		  $test_states = $this->getTestState($id,$val,$field_num);
+			if(count($test_states)){
+			  $state = $test_states["state"];
+			  $sign = $test_states["sign"];
+			  $field_num = $test_states["field_num"];
+			  $max = $test_states["max"];
+			  $min = $test_states["min"];
+			 }
+		}
+	}	
+	
+	
+	
+	
+	return response()->json(['state'=>$state,'sign'=>$sign,'field_num'=>$field_num,'min'=>$min,'max'=>$max,
+	                         'formula_result'=>$formula_result,'calc_result'=>$calc_result,'calc_unit'=>$calc_unit]);
+}
+
+function getFieldRefRange($result_id){
+	$result = LabResults::find($result_id);
+	$order  = LabOrders::find($result->order_id);
+	$patient = Patient::find($order->patient_num);
+	$result_value = $result->result;
+	//age in years
+	$age = Carbon::parse($patient->birthdate)->age;
+	$type='Y';
+	$gender = $patient->sex;
+	$test_id = $result->test_id;
+	if($age==0){
+		//age in months
+		$age=Carbon::parse($patient->birthdate)->diff(Carbon::now())->format('%m');
+		$type='M';
+		if($age==0){
+		  //age in days
+		  $age=Carbon::parse($patient->birthdate)->diff(Carbon::now())->format('%d');
+		  //age in weeks
+		  if($age>7){
+			 $age=$age/7;
+             $type='W';			
+		  }else{
+			  $type='D';
+		  }
+		
+		}
+	}
+	//dd($test_id.'-'.$age.'-'.$type);
+	//age are both filled and gender is male or female
+	
+	
+	$field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.fage')
+					 ->where('f.fage','<>','')
+					 ->where('f.fage','<=',$age)
+					 ->whereNOTNULL('f.tage')
+					 ->where('f.tage','<>','')
+					 ->where('f.tage','>',$age)
+					 ->where('f.mytype',$type)
+					 ->where('f.gender',$gender)
+	  			     ->where('f.test_id',$test_id)
+				     ->first(); 
+					 
+	if(!isset($field)){
+	  //age are both filled and gender is both
+	  $field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.fage')
+					 ->where('f.fage','<>','')
+					 ->where('f.fage','<=',$age)
+					 ->whereNOTNULL('f.tage')
+					 ->where('f.tage','<>','')
+					 ->where('f.tage','>',$age)
+					 ->where('f.mytype',$type)
+					 ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.gender','=','B')
+						   ->orWhereNULL('f.gender');
+					     })
+				     ->first(); 
+	     
+	    if(!isset($field)){
+			//min age is only filled and gender is male or female
+			$field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.fage')
+					 ->where('f.fage','<>','')
+					 ->where('f.fage','<=',$age)
+					 ->where('f.mytype',$type)
+					 ->where('f.gender',$gender)
+	  			     ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.tage','=','')
+						   ->orWhereNULL('f.tage');
+					 })
+				     ->first();
+					 
+			if(!isset($field)){
+			   //min age is only filled and gender is Both
+			   $field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.fage')
+					 ->where('f.fage','<>','')
+					 ->where('f.fage','<=',$age)
+					 ->where('f.mytype',$type)
+	  			     ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.tage','=','')
+						   ->orWhereNULL('f.tage');
+					        })
+					->where(function($q){
+						 $q->where('f.gender','=','B')
+						   ->orWhereNULL('f.gender');
+					     })		
+				     ->first(); 
+			
+			if(!isset($field)){
+			         //max age is only filled and gender is Male or Female
+			   $field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.tage')
+					 ->where('f.tage','<>','')
+					 ->where('f.tage','>',$age)
+					 ->where('f.mytype',$type)
+					 ->where('f.gender',$gender)
+	  			     ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.fage','=','')
+						   ->orWhereNULL('f.fage');
+					        })
+				     ->first(); 
+			
+			if(!isset($field)){
+			         //max age is only filled and gender is Both
+			   $field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.tage')
+					 ->where('f.tage','<>','')
+					 ->where('f.tage','>',$age)
+					 ->where('f.mytype',$type)
+	  			     ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.fage','=','')
+						   ->orWhereNULL('f.fage');
+					        })
+					->where(function($q){
+						 $q->where('f.gender','=','B')
+						   ->orWhereNULL('f.gender');
+					     })		
+				     ->first(); 
+			
+			if(!isset($field)){
+			//no age is  filled and gender is male or female
+			$field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and f.gender=? and f.test_id=?
+					             and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)',[$gender,$test_id])
+					 ->first(); 
+		    
+			if(!isset($field)){
+				//no age is only filled and gender is both
+				$field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and f.gender="B" and f.test_id=?
+					            and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)',$test_id)
+				     ->first();
+					 
+			   if(!isset($field)){
+				   $field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and  f.gender IS NULL and f.test_id=?
+					            and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)
+								and f.normal_value1 IS NOT NULL and f.normal_value1<>"" 
+								and f.normal_value2 IS NOT NULL and f.normal_value2<>""',$test_id)
+				     ->first();
+					 
+			   if(!isset($field)){
+				    $field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and  f.gender IS NULL and f.test_id=?
+					            and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)
+								and f.normal_value2 IS NOT NULL and f.normal_value2<>"" 
+								and (f.normal_value1 IS NULL or f.normal_value1="")',$test_id)
+				     ->first();
+					
+					  
+				  if(!isset($field)){
+					 $field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and  f.gender IS NULL and f.test_id=?
+					            and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)
+								and f.normal_value1 IS NOT NULL and f.normal_value1<>"" 
+								and (f.normal_value2 IS NULL or f.normal_value2="")',$test_id)
+				     ->first();
+					 
+				  }	 
+			   }
+			   
+			   }		
+			
+			
+			}
+		  }
+		 }
+		}
+		}
+	   }
+	}
+	
+	
+	
+	$field_num ='';
+	$ref_range = NULL; 
+	
+	if(isset($field)){
+		$min = isset($field->normal_value1)?$field->normal_value1:'';
+		$max = isset($field->normal_value2)?$field->normal_value2:'';
+	     //update field id for result
+	    $field_num = $field->id;
+		
+			 if($min !='' && $max!=''){
+			   $ref_range = $min.'-'.$max;
+			 }else{
+				if($min=='' && $max!=''){
+					$ref_range = "<".$max;
+				}
+				if($max=='' && $min!=''){
+					$ref_range = ">=".$min;	
+					}
+				if($max=='' && $min==''){
+					$ref_range =NULL;	
+					}	
+				
+			 }
+	  }
+	
+return array('field_num'=>$field_num,'ref_range'=>$ref_range);
+}
+
+function getTestState($result_id,$result_val,$field_num){
+	$result = LabResults::find($result_id);
+	$order  = LabOrders::find($result->order_id);
+	$patient = Patient::find($order->patient_num);
+	//age in years
+	$age = Carbon::parse($patient->birthdate)->age;
+	$type='Y';
+	$gender = $patient->sex;
+	$test_id = $result->test_id;
+	if($age==0){
+		//age in months
+		$age=Carbon::parse($patient->birthdate)->diff(Carbon::now())->format('%m');
+		$type='M';
+		if($age==0){
+		  //age in days
+		  $age=Carbon::parse($patient->birthdate)->diff(Carbon::now())->format('%d');
+		  //age in weeks
+		  if($age>7){
+			 $age=$age/7;
+             $type='W';			
+		  }else{
+			  $type='D';
+		  }
+		
+		}
+	}
+	//dd($test_id.'-'.$age.'-'.$type);
+	//if($field_num!='' && isset($field_num)){
+		//$field = DB::table('tbl_lab_tests_fields as f')->select('f.*')->find($field_num);
+	//}else{
+		
+	//age are both filled and gender is male or female
+	$field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.fage')
+					 ->where('f.fage','<>','')
+					 ->where('f.fage','<=',$age)
+					 ->whereNOTNULL('f.tage')
+					 ->where('f.tage','<>','')
+					 ->where('f.tage','>',$age)
+					 ->where('f.mytype',$type)
+					 ->where('f.gender',$gender)
+	  			     ->where('f.test_id',$test_id)
+				     ->first(); 
+					 
+	if(!isset($field)){
+	  //age are both filled and gender is both
+	  $field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.fage')
+					 ->where('f.fage','<>','')
+					 ->where('f.fage','<=',$age)
+					 ->whereNOTNULL('f.tage')
+					 ->where('f.tage','<>','')
+					 ->where('f.tage','>',$age)
+					 ->where('f.mytype',$type)
+					 ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.gender','=','B')
+						   ->orWhereNULL('f.gender');
+					     })
+				     ->first(); 
+	     
+	    if(!isset($field)){
+			//min age is only filled and gender is male or female
+			$field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.fage')
+					 ->where('f.fage','<>','')
+					 ->where('f.fage','<=',$age)
+					 ->where('f.mytype',$type)
+					 ->where('f.gender',$gender)
+	  			     ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.tage','=','')
+						   ->orWhereNULL('f.tage');
+					 })
+				     ->first();
+					 
+			if(!isset($field)){
+			   //min age is only filled and gender is Both
+			   $field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.fage')
+					 ->where('f.fage','<>','')
+					 ->where('f.fage','<=',$age)
+					 ->where('f.mytype',$type)
+	  			     ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.tage','=','')
+						   ->orWhereNULL('f.tage');
+					        })
+					->where(function($q){
+						 $q->where('f.gender','=','B')
+						   ->orWhereNULL('f.gender');
+					     })		
+				     ->first(); 
+			
+			if(!isset($field)){
+			         //max age is only filled and gender is Male or Female
+			   $field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.tage')
+					 ->where('f.tage','<>','')
+					 ->where('f.tage','>',$age)
+					 ->where('f.mytype',$type)
+					 ->where('f.gender',$gender)
+	  			     ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.fage','=','')
+						   ->orWhereNULL('f.fage');
+					        })
+				     ->first(); 
+			
+			if(!isset($field)){
+			         //max age is only filled and gender is Both
+			   $field = DB::table('tbl_lab_tests_fields as f')
+				      ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->where('f.is_comparison','Y')
+					 ->where('f.active','Y')
+					 ->whereNOTNULL('f.tage')
+					 ->where('f.tage','<>','')
+					 ->where('f.tage','>',$age)
+					 ->where('f.mytype',$type)
+	  			     ->where('f.test_id',$test_id)
+					 ->where(function($q){
+						 $q->where('f.fage','=','')
+						   ->orWhereNULL('f.fage');
+					        })
+					->where(function($q){
+						 $q->where('f.gender','=','B')
+						   ->orWhereNULL('f.gender');
+					     })		
+				     ->first(); 
+			
+			if(!isset($field)){
+			//no age is  filled and gender is male or female
+			$field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and f.gender=? and f.test_id=?
+					             and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)',[$gender,$test_id])
+					 ->first(); 
+		    
+			if(!isset($field)){
+				//no age is only filled and gender is both
+				$field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and f.gender="B" and f.test_id=?
+					            and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)',$test_id)
+				     ->first();
+			if(!isset($field)){
+				//no age and no gender
+				$field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and  f.gender IS NULL and f.test_id=?
+					            and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)
+								and f.normal_value1 IS NOT NULL and f.normal_value1<>"" 
+								and f.normal_value2 IS NOT NULL and f.normal_value2<>"" ',$test_id)
+				     ->first();
+					 
+			  if(!isset($field)){
+				   $field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and  f.gender IS NULL and f.test_id=?
+					            and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)
+								and f.normal_value2 IS NOT NULL and f.normal_value2<>"" 
+								and (f.normal_value1 IS NULL or f.normal_value1="")',$test_id)
+				     ->first();
+					 
+			  if(!isset($field)){
+				  $field = DB::table('tbl_lab_tests_fields as f')
+				     ->select('f.*')
+					 ->join('tbl_lab_tests as t','t.id','f.test_id')
+					 ->whereRaw('f.is_comparison="Y" and f.active="Y" and  f.gender IS NULL and f.test_id=?
+					            and (f.fage="" or f.fage IS NULL) and (f.tage="" or f.tage IS NULL)
+								and f.normal_value1 IS NOT NULL and f.normal_value1<>"" 
+								and (f.normal_value2 IS NULL or f.normal_value2="")',$test_id)
+				     ->first();
+					 
+			  }
+			  
+			  }
+			  
+			  }		
+			
+			
+			}
+		  	  
+		  }
+		 }
+		}
+		}
+	   }
+	 }
+	//}
+	//dd($field);
+	$state= 'U';
+	$sign='';
+	$min='';
+	$max='';
+	
+	if(isset($field)){
+		$min = isset($field->normal_value1)?$field->normal_value1:'';
+		$max = isset($field->normal_value2)?$field->normal_value2:'';
+	     //min is not empty and max is empty
+		 if(($min!='') && ($max=='') && $result_val!=''){
+			 if($result_val>=floatVal($min)){
+				 $state='N';
+				 $sign = isset($field->sign)&& $field->sign!=''?$field->sign:'';
+			 }else{
+				 $low_panic = $field->panic_low_value;
+				 $state='L';
+				 $sign = isset($field->sign_min)&& $field->sign_min!=''?$field->sign_min:__('Low');
+				 if($low_panic !=NULL && $low_panic !='' && $result_val <floatVal($low_panic)){
+					 $state='PL';
+					 $sign = __('Low Low');
+				 }
+			 }
+		 }
+		 //min is empty and max is not empty
+		 if(($max!='') && ($min=='') && $result_val!=''){
+			 if($result_val<=floatVal($max)){
+				 $state='N';
+				 $sign = isset($field->sign) && $field->sign!=''?$field->sign:'';
+			 }else{
+				 $high_panic = $field->panic_high_value;
+				 $state='H';
+				 $sign = isset($field->sign_max) && $field->sign_max!=''?$field->sign_max:__('High');
+				 if($high_panic !=NULL && $high_panic !='' && $result_val > floatVal($high_panic)){
+					 $state='PH';
+					 $sign = __('High High');
+				 }
+			 }
+		 }
+		 
+		 //min is not empty and max is not empty
+		  if(($max!='') && ($min!='') && $result_val!=''){
+			 if($result_val>=floatVal($min) && $result_val<=floatVal($max)){
+				 $state ='N';
+				 $sign = isset($field->sign) && $field->sign!=''?$field->sign:'';
+			 }else{
+				 if($result_val>floatVal($max)){
+					 $state='H';
+					 $sign = isset($field->sign_max) && $field->sign_max!=''?$field->sign_max:__('High');
+					 $high_panic = $field->panic_high_value;
+					 if($high_panic !=NULL && $high_panic !='' && $result_val > floatVal($high_panic)){
+					 $state='PH';
+					 $sign = __('High High');
+				      }
+				 }else{
+					if($result_val<floatVal($min)){
+					  $low_panic = $field->panic_low_value;
+					  $state='L';
+					  $sign = isset($field->sign_min) && $field->sign_min!=''?$field->sign_min:__('Low');
+					  if($low_panic !=NULL && $low_panic !='' && $result_val <floatVal($low_panic)){
+						 $state='PL';
+						 $sign = __('Low Low');
+					  }
+					  
+					} 
+				 }
+			 }  
+		  
+		  
+		  }
+	//update field id for result
+	$field_num = $field->id;
+	}
+	
+return array('state'=>$state,'sign'=>$sign,'field_num'=>$field_num,'min'=>$min,'max'=>$max);
+}
+
+
+function evaluateCalcFormula($formula_test_id,$all_tests){
+		$formula_result = '';
+		$calc_unit = '';
+		$f = DB::table('tbl_lab_tests_formulas')->where('test_id',$formula_test_id)->where('active','Y')->first();
+		
+		//dd($f);
+		if(isset($f)){
+			$calc_unit = $f->unit;
+			$code1 = isset($f->test1) && $f->test1!=''?$f->test1:'';
+			$code2 = isset($f->test2) && $f->test2!=''?$f->test2:'';
+			$code3 = isset($f->test3) && $f->test3!=''?$f->test3:'';
+			$code4 = isset($f->test4) && $f->test4!=''?$f->test4:'';
+			$factor1 = isset($f->factor1) && $f->factor1!=''?$f->factor1:'';
+			$factor2 = isset($f->factor2) && $f->factor2!=''?$f->factor2:'';
+			$factor3 = isset($f->factor3) && $f->factor3!=''?$f->factor3:'';
+			$factor4 = isset($f->factor4) && $f->factor4!=''?$f->factor4:'';
+			
+			$formula = $f->formula;
+			$formula = str_replace('factor1',$factor1,$formula);
+			$formula = str_replace('factor2',$factor2,$formula);
+			$formula = str_replace('factor3',$factor3,$formula);
+			$formula = str_replace('factor4',$factor4,$formula);
+			
+			foreach($all_tests as $arr){
+				if($code1!='' && $arr["test_id"]==$code1 && $arr["result"]!=''){
+					$formula = str_replace('code1',$arr["result"],$formula);
+				}
+				if($code2!='' && $arr["test_id"]==$code2 && $arr["result"]!=''){
+					$formula = str_replace('code2',$arr["result"],$formula);
+				}
+				if($code3!='' && $arr["test_id"]==$code3 && $arr["result"]!=''){
+					$formula = str_replace('code3',$arr["result"],$formula);
+				}
+				if($code4!='' && $arr["test_id"]==$code4 && $arr["result"]!=''){
+					$formula = str_replace('code3',$arr["result"],$formula);
+				}
+			  }
+			
+		    if ($this->isValidFormula($formula)) {
+                 eval( '$formula_result = (' . $formula. ');' );
+               }
+		   
+		   }
+         //dd($formula_result);
+		 if(is_numeric($formula_result)){
+			 $formula_result = number_format((float)$formula_result,2,'.','');
+		 }
+return array('calc_result'=>$formula_result,'calc_unit'=>$calc_unit);
+}	
+
+function evaluateFormula($formula_test_id,$all_tests){
+		$formula_result = '';
+		$f = DB::table('tbl_lab_tests_formulas')->where('test_id',$formula_test_id)->where('active','Y')->first();
+		
+		//dd($f);
+		if(isset($f)){
+			$code1 = isset($f->test1) && $f->test1!=''?$f->test1:'';
+			$code2 = isset($f->test2) && $f->test2!=''?$f->test2:'';
+			$code3 = isset($f->test3) && $f->test3!=''?$f->test3:'';
+			$code4 = isset($f->test4) && $f->test4!=''?$f->test4:'';
+			$factor1 = isset($f->factor1) && $f->factor1!=''?$f->factor1:'';
+			$factor2 = isset($f->factor2) && $f->factor2!=''?$f->factor2:'';
+			$factor3 = isset($f->factor3) && $f->factor3!=''?$f->factor3:'';
+			$factor4 = isset($f->factor4) && $f->factor4!=''?$f->factor4:'';
+			
+			$formula = $f->formula;
+			$formula = str_replace('factor1',$factor1,$formula);
+			$formula = str_replace('factor2',$factor2,$formula);
+			$formula = str_replace('factor3',$factor3,$formula);
+			$formula = str_replace('factor4',$factor4,$formula);
+			
+			foreach($all_tests as $arr){
+				if($code1!='' && $arr["test_id"]==$code1 && $arr["result"]!=''){
+					$formula = str_replace('code1',$arr["result"],$formula);
+				}
+				if($code2!='' && $arr["test_id"]==$code2 && $arr["result"]!=''){
+					$formula = str_replace('code2',$arr["result"],$formula);
+				}
+				if($code3!='' && $arr["test_id"]==$code3 && $arr["result"]!=''){
+					$formula = str_replace('code3',$arr["result"],$formula);
+				}
+				if($code4!='' && $arr["test_id"]==$code4 && $arr["result"]!=''){
+					$formula = str_replace('code3',$arr["result"],$formula);
+				}
+			  }
+			
+		    if ($this->isValidFormula($formula)) {
+                 eval( '$formula_result = (' . $formula. ');' );
+               }
+		   
+		   }
+         //dd($formula_result);
+		 if(is_numeric($formula_result)){
+			 $formula_result = number_format((float)$formula_result,2,'.','');
+		 }
+return $formula_result;
+}	
+
+function isValidFormula($formula) {
+    // Define a regular expression pattern for a mathematical formula with decimals and parentheses
+    $pat = '/^[\d\(\)\+\-\*\/\.]+$/';
+    // Use preg_match to check if the formula matches the pattern
+    return preg_match($pat, $formula);
+}
+
+public function UpdateLab($lang, Request $request)
+    {
+     if($request->order_id=='0'){
+		Session::forget('order_ext_lab');
+        Session::put('order_ext_lab',$request->ext_lab); 		
+	 }else{ 
+	    LabOrders::where('id',$request->order_id)->update(['ext_lab'=>$request->ext_lab]);
+	    LabResults::where('order_id',$request->order_id)->update(['ext_lab'=>$request->ext_lab]);
+	 }
+	 return response()->json(['data'=>'success']);
+	}
+
+public function filterGroup($lang,Request $request){
+	$type = $request->type;
+	switch($type){
+	 case 'cat':
+	    $category_num = $request->category_num;
+		if($category_num !='' && $category_num !='0'){
+		$groups = DB::table('tbl_lab_tests')->where('category_num',$category_num)
+		               ->where('active','Y')
+					   ->where(function($q){
+							 $q->where('is_group','Y');
+							 $q->orWhereNOTNULL('cnss');
+							})
+					   ->orderBy('testord')->orderBy('id','desc')->get();
+		}else{
+		$groups = DB::table('tbl_lab_tests')->where('active','Y')
+		             ->where(function($q){
+						 $q->where('is_group','Y');
+						 $q->orWhereNOTNULL('cnss');
+						})
+					 ->orderBy('testord')->orderBy('id','desc')->get();
+		}
+	    
+		//dd($groups->pluck('id','test_name'));
+		$tests  = $groups->pluck('id')->toArray();
+		
+	    $html = '<option value="">'.__("Choose a code").'</option>';
+		foreach($groups as $g){
+			$name =$g->test_name;
+			if(isset($g->test_code) && $g->test_code!=''){
+			$name.=' ( '.$g->test_code.')';
+			}
+			$html.='<option value="'.$g->id.'">'.$name.'</option>';
+		}
+		return response()->json(['html'=>$html,'tests'=>$tests]);
+     break;
+     case 'grp':
+	  $group_num = $request->group_num;
+	  $category_num = $request->category_num;
+	  $groups = DB::table('tbl_lab_tests');
+	  
+	  if($category_num !='' && $category_num !='0'){
+		$groups = $groups->where('category_num',$category_num);  
+	  }
+	  
+	  if($group_num !='' && $group_num !='0'){
+		$groups = $groups->where('id',$group_num);  
+	  }
+	   
+	   //dd($category_num);
+	   $groups = $groups->where('active','Y')
+	             ->where(function($q){
+					 $q->where('is_group','Y');
+					 $q->orWhereNOTNULL('cnss');
+				    })
+				 ->orderBy('testord')->orderBy('id','desc')->get(); 
+				 
+	   $tests  = $groups->pluck('id')->toArray();
+	   $html = '<option value="">'.__("Choose a code").'</option>';
+		foreach($groups as $g){
+			$name =$g->test_name;
+			if(isset($g->test_code) && $g->test_code!=''){
+			$name.=' ( '.$g->test_code.')';
+			}
+			$html.='<option value="'.$g->id.'">'.$name.'</option>';
+		}
+		return response()->json(['html'=>$html,'tests'=>$tests]);
+     break;	 
+	}
+	
+}	
+
+public function filterTests($lang,Request $request){
+	$group_num = $request->group_num;
+	//$category_num = $request->category_num;
+	
+	
+	
+	$grp_tests = array();
+	
+	if($group_num !='' && $group_num!=NULL){
+	    $groups_tests = DB::table('tbl_lab_groups as g')
+		               ->select('g.descrip as test_name')
+					   ->where('id',$group_num)
+					   ->where('active','Y')->orderBy('id');
+		
+		$tests= LabTests::select('test_name')
+		         ->where('active','Y')
+				 ->where('group_num',$group_num)
+				 ->orderby('group_num')->orderBy('testord')
+				 ->union($groups_tests)
+				 ->get();
+
+	}else{
+   $groups_tests = DB::table('tbl_lab_groups as g')
+		               ->select('g.descrip as test_name')
+					   ->where('active','Y')->orderBy('id');
+		
+		$tests= LabTests::select('test_name')
+		         ->where('active','Y')
+				 ->orderby('group_num')->orderBy('testord')
+				 ->union($groups_tests)
+				 ->get();
+	}
+
+	
+		
+	
+	foreach($tests as $t){
+	  array_push($grp_tests,$t->test_name);	
+	}
+	return response()->json(['tests'=>$grp_tests]);
+}	
+
+public function saveOrder($lang,Request $request){
+	$t = array_map('intval', $request->tests);
+	
+	$tests = LabTests::where(function($q) use($t){
+					  $q->where('is_group','<>','Y');
+					  $q->whereIn('id',$t);
+					 })->orWhere(function($q) use($t){
+					    $q->where('is_group','<>','Y');
+					    $q->whereIn('group_num',$t);
+				      })->where('active','Y')->pluck('id')->toArray();
+	
+	$tests_bill = $request->tests_bill;
+	
+	
+	$clinic_num = $request->clinic_num;
+	$patient_num = $request->patient_num;
+	$ext_lab =  $request->ext_lab;
+	$id = $request->order_id;
+    
+	$patient = Patient::find($patient_num);
+    $user_num = auth()->user()->id;	
+	$user = User::find($patient->ext_lab);
+	if(auth()->user()->type==1 || auth()->user()->type==3){
+	$user = User::find($user_num);	
+	}
+	//get according to user in order to get prices
+	 $doc_lab = Clinic::where('id',auth()->user()->clinic_num)->first();
+	 
+	 if(isset($user) && $user->type==1){
+		$doc_lab = Doctor::where('doctor_user_num',$user->id)->first();
+		}
+		
+	 if(isset($user) && $user->type==3){
+		$doc_lab = ExtLab::where('lab_user_num',$user->id)->first();
+		}
+	
+	
+	$currencyUSD=TblBillCurrency::where('active','O')->where('abreviation','USD')->first();
+	$currencyEURO=TblBillCurrency::where('active','O')->where('abreviation','EUR')->first();
+	$lbl_usd = isset($currencyUSD)?$currencyUSD->price:15000;
+	$lbl_euro = isset($currencyEURO)?$currencyEURO->price:15000;
+	
+	$code_prices = array();
+	$lab_priced =$lab_pricel=$lab_pricee=0;
+	//recalculate prices if user has no defined prices
+	//if user has prices
+	if(isset($doc_lab->prices) && $doc_lab->has_prices=='Y'){
+				$lab_prices = json_decode($doc_lab->prices,true);
+				foreach($lab_prices as $k=>$v){
+		          $tid = $v['test_id'];
+		          $code_prices[$tid]=array($v['is_manual'],$v['totald'],$v['totall'],$v['totale']); 
+	             }
+		}else{
+			$lab_priced =  isset($doc_lab->priced) && $doc_lab->priced!='' ?$doc_lab->priced:0;
+	        $lab_pricel =  $lab_priced*$lbl_usd;
+	        $lab_pricee =  $lab_pricel/$lbl_euro;
+	        $lab_priced = number_format((float)$lab_priced,2,'.','');
+	        $lab_pricel = number_format((float)$lab_pricel,2,'.','');
+	        $lab_pricee = number_format((float)$lab_pricee,2,'.','');	
+		}
+	
+	if($id=='0'){
+		$order_id = LabOrders::create([
+		  'clinic_num'=>$clinic_num,
+		  'patient_num'=>$patient_num,
+		  'ext_lab' =>$ext_lab,
+		  'tests' => json_encode($tests),
+		  'chosen_codes'=>json_encode($t),
+		  'user_num'=>$user_num,
+		  'order_datetime'=>Carbon::now()->format('Y-m-d H:i'),
+		  'status'=>'P',
+		  'active' => 'Y'
+		  ])->id;
+	
+	    $order = LabOrders::find($order_id);
+	 
+	   //create bill head for order
+	   //doctor_num -->ext_lab (lb or doctor user num)
+	   $bill_id = TblBillHead::create([
+	     'order_id'=>$order->id,
+		 'doctor_bill_num'=>$order->ext_lab,
+		 'clinic_num'=>$order->clinic_num,
+		 'doctor_num'=>$order->ext_lab,
+		 'patient_num'=>$order->patient_num,
+		 'bill_datein'=>Carbon::now()->format('Y-m-d H:i'),
+		 'user_num'=>$user_num,
+		 'user_type'=>auth()->user()->type,
+		 'status'=>'O'
+	   ])->id;
+	    
+		$lab = Clinic::find($order->clinic_num);
+      	$SerieFacBill = $lab->bill_serial_code;
+		$SeqFacBill = $lab-> bill_sequence_num ;
+		$reqID=trim($SerieFacBill)."-".($SeqFacBill+1);
+		Clinic::where('id',$order->clinic_num)->update(['bill_sequence_num' => $SeqFacBill+1]);
+		TblBillHead::where('id',$bill_id)->update(['clinic_bill_num'=>$reqID]);	
+	    $tbillpricel=0.00;
+        $tbillpriced=0.00;
+		$tbillpricee=0.00;
+		
+		
+		//create details for bill
+		foreach($tests_bill as $ord){
+			$test_id = substr($ord,0,-2);
+			$test = DB::table('tbl_lab_tests')->find($test_id);
+			
+			
+				  if($test->cnss !=NULL && $test->cnss !=''){
+					 if(count($code_prices) && isset($code_prices[$test_id])){
+						$priced = $code_prices[$test_id][1];
+						$pricel = $code_prices[$test_id][2];
+						$pricee = $code_prices[$test_id][3];
+						
+					 }else{
+						if( isset($test->price) && $test->price!='' && $test->price!=0){
+							$priced = $test->price;
+							$pricel =  $priced*$lbl_usd;
+	                        $pricee =  $pricel/$lbl_euro;
+							$priced = number_format((float)$priced,2,'.','');
+		                    $pricel = number_format((float)$pricel,2,'.','');
+			                $pricee = number_format((float)$pricee,2,'.','');
+							$priced = $test->nbl*$priced;
+							$pricel = $test->nbl*$pricel;
+							$pricee = $test->nbl*$pricee;
+						}else{
+							$priced = $test->nbl*$lab_priced;
+							$pricel = $test->nbl*$lab_pricel;
+							$pricee = $test->nbl*$lab_pricee;
+						} 
+					 
+					 }
+					 
+					 $priced = number_format((float)$priced,2,'.','');
+		             $pricel = number_format((float)$pricel,2,'.','');
+			         $pricee = number_format((float)$pricee,2,'.','');
+					
+					TblBillSpecifics::create([
+					   'bill_num'=>$bill_id,
+					   'doctor_num'=>$order->ext_lab,
+					   'user_num'=>$user_num,
+					   'user_type'=>auth()->user()->type,
+					   'bill_code'=>$test->id,
+					   'cnss'=>$test->cnss,
+					   'bill_name'=>$test->test_name,
+					   'bill_quantity'=>$test->nbl,
+					   'lbill_price'=>$pricel,
+					   'bill_price'=>$priced,
+					   'ebill_price'=>$pricee,
+					   'status'=>'O'
+					  ]);
+					  
+					  $tbillpricel=$tbillpricel+ $pricel;
+					  $tbillpriced=$tbillpriced+ $priced;
+					  $tbillpricee=$tbillpricee+ $pricee;
+				    }
+			
+		}
+	   //create results for new order for each test
+	   foreach($tests as $ord){
+		    $test = LabTests::find($ord);
+			$prev_result = LabResults::select('tbl_visits_order_results.id as result_id')
+			               ->join('tbl_visits_orders as o','o.id','tbl_visits_order_results.order_id')
+			               ->where('o.clinic_num',$order->clinic_num)
+			               ->where('o.patient_num',$order->patient_num)
+						   ->where('o.status','V')
+						   ->whereRaw('o.order_datetime<?',$order->order_datetime)
+						   ->where('tbl_visits_order_results.active','Y')
+						   ->where('tbl_visits_order_results.test_id',$test->id)
+					       ->where('tbl_visits_order_results.order_id','<>',$order->id)
+						   ->orderBy('tbl_visits_order_results.id','desc')
+						   ->orderBy('tbl_visits_order_results.created_at','desc')
+						   ->first();
+					   
+			
+			$result_id = LabResults::create([
+			 'user_num'=>$user_num,
+			 'clinic_num'=>$order->clinic_num,
+			 'patient_num'=>$order->patient_num,
+			 'ext_lab'=>$order->ext_lab,
+			 'order_id'=>$order->id,
+			 'test_id'=>$test->id,
+			 'test_code'=>$test->test_code,
+			 'test_name'=>$test->test_name,
+			 'prev_result_num'=>isset($prev_result)?$prev_result->result_id:NULL,
+			 'referred_tests'=>isset($test) && isset($test->referred_tests)?$test->referred_tests:NULL,
+			 'active'=>'Y'
+			])->id;
+			
+			if($test->is_printed=='Y'){
+			//do nothing
+			}else{	
+			 $new_values = $this->getFieldRefRange($result_id);
+			 $field_num =isset($new_values["field_num"])?$new_values["field_num"]:NULL;
+		     $ref_range =isset($new_values["ref_range"])?$new_values["ref_range"]:NULL; 
+	     	 LabResults::where('id',$result_id)->update(['ref_range'=>$ref_range,'field_num'=>$field_num]);
+		    }
+		 
+		 }
+		//update totals
+        $sumpay=DB::table('tbl_bill_payment')->where('bill_num','=',$bill_id)->where('status','Y')->where('payment_type','=','P')->sum('lpay_amount');
+        $sumref=DB::table('tbl_bill_payment')->where('bill_num','=',$bill_id)->where('status','Y')->where('payment_type','=','R')->sum('lpay_amount');
+        $Nbalance=number_format((float) $tbillpricel-$sumpay+$sumref, 2, '.', ',');
+        $balance=floatval(preg_replace('/[^\d.-]/', '', $Nbalance));
+        TblBillHead::where('id',$bill_id)->update(['bill_balance'=>$balance,'lbill_total'=>$tbillpricel,'bill_total'=>$tbillpriced,'ebill_total'=>$tbillpricee]);		
+		 
+	
+	}else{
+	 
+	 //update order data			 
+	$order_id = $id;
+	LabOrders::where('id',$id)->update([
+		  'ext_lab' =>$ext_lab,
+		  'tests' => json_encode($tests),
+		  'chosen_codes'=>json_encode($t),
+		  'user_num'=>$user_num
+		]);
+	 $order = LabOrders::find($id);
+	 //delete only results not in updated tests
+	  LabResults::where('order_id',$id)->whereNotIn('test_id',$tests)->delete();
+	
+	  //update bill head with new order
+	   $bill = TblBillHead::where('order_id',$id)->where('status','O')->first();
+	   
+	   
+	   if(isset($bill)){
+	    $bill_id = $bill->id;
+		TblBillHead::where('id',$bill_id)->update([
+	     'order_id'=>$id,
+		 'doctor_bill_num'=>$order->ext_lab,
+		 'clinic_num'=>$order->clinic_num,
+		 'doctor_num'=>$order->ext_lab,
+		 'patient_num'=>$order->patient_num,
+		 'bill_datein'=>Carbon::now()->format('Y-m-d H:i'),
+		 'user_num'=>$user_num,
+		 'user_type'=>auth()->user()->type,
+		 'status'=>'O'
+	     ]);
+	   }else{
+		   //create bill head for order
+		   $bill_id = TblBillHead::create([
+			 'order_id'=>$order->id,
+			 'doctor_bill_num'=>$order->ext_lab,
+			 'clinic_num'=>$order->clinic_num,
+			 'doctor_num'=>$order->ext_lab,
+			 'patient_num'=>$order->patient_num,
+			 'bill_datein'=>Carbon::now()->format('Y-m-d H:i'),
+			 'user_num'=>$user_num,
+			 'user_type'=>auth()->user()->type,
+			 'status'=>'O'
+		   ])->id;
+		   $lab = Clinic::find($order->clinic_num);
+      	   $SerieFacBill = $lab->bill_serial_code;
+		   $SeqFacBill = $lab-> bill_sequence_num ;
+		   $reqID=trim($SerieFacBill)."-".($SeqFacBill+1);
+		   Clinic::where('id',$order->clinic_num)->update(['bill_sequence_num' => $SeqFacBill+1]);
+		   TblBillHead::where('id',$bill_id)->update(['clinic_bill_num'=>$reqID]);	
+	   }
+	    
+		
+		
+		//delete all bill details
+		TblBillSpecifics::where('bill_num',$bill_id)->delete();
+		$tbillpricel=0.00;
+        $tbillpriced=0.00;
+	    $tbillpricee=0.00;
+	 
+		//create details for bill
+		foreach($tests_bill as $ord){
+			$test_id = substr($ord,0,-2);
+			$test = DB::table('tbl_lab_tests')->find($test_id);
+			
+			
+				  if($test->cnss !=NULL && $test->cnss !=''){
+					 if(count($code_prices) && isset($code_prices[$test_id])){
+						$priced = $code_prices[$test_id][1];
+						$pricel = $code_prices[$test_id][2];
+						$pricee = $code_prices[$test_id][3];
+						
+					 }else{
+						if( isset($test->price) && $test->price!='' && $test->price!=0){
+							$priced = $test->price;
+							$pricel =  $priced*$lbl_usd;
+	                        $pricee =  $pricel/$lbl_euro;
+							$priced = number_format((float)$priced,2,'.','');
+		                    $pricel = number_format((float)$pricel,2,'.','');
+			                $pricee = number_format((float)$pricee,2,'.','');
+							$priced = $test->nbl*$priced;
+							$pricel = $test->nbl*$pricel;
+							$pricee = $test->nbl*$pricee;
+						}else{
+							$priced = $test->nbl*$lab_priced;
+							$pricel = $test->nbl*$lab_pricel;
+							$pricee = $test->nbl*$lab_pricee;
+						} 
+					 
+					 }
+					 
+					 $priced = number_format((float)$priced,2,'.','');
+		             $pricel = number_format((float)$pricel,2,'.','');
+			         $pricee = number_format((float)$pricee,2,'.','');
+		           
+					TblBillSpecifics::create([
+					   'bill_num'=>$bill_id,
+					   'doctor_num'=>$order->ext_lab,
+					   'user_num'=>$user_num,
+					   'user_type'=>auth()->user()->type,
+					   'bill_code'=>$test->id,
+					   'cnss'=>$test->cnss,
+					   'bill_name'=>$test->test_name,
+					   'bill_quantity'=>$test->nbl,
+					   'lbill_price'=>$pricel,
+					   'bill_price'=>$priced,
+					   'ebill_price'=>$pricee,
+					   'status'=>'O'
+					  ]);
+					  
+					  $tbillpricel=$tbillpricel+ $pricel;
+					  $tbillpriced=$tbillpriced+ $priced;
+					  $tbillpricee=$tbillpricee+ $pricee;
+				    }
+			
+		}
+		 
+		 //create results and bill details for this order
+	     foreach($tests as $ord){
+		   //check if test exists in result table 
+			$result = LabResults::where('order_id',$id)->where('test_id',$ord)->first();
+			$test = LabTests::find($ord);
+			
+         	//create only results not found in tests
+			if(!isset($result)){
+			   $prev_result = LabResults::select('tbl_visits_order_results.id as result_id')
+			               ->join('tbl_visits_orders as o','o.id','tbl_visits_order_results.order_id')
+			               ->where('o.clinic_num',$order->clinic_num)
+			               ->where('o.patient_num',$order->patient_num)
+						   ->where('o.status','V')
+						   ->whereRaw('o.order_datetime<?',$order->order_datetime)
+						   ->where('tbl_visits_order_results.active','Y')
+						   ->where('tbl_visits_order_results.test_id',$test->id)
+					       ->where('tbl_visits_order_results.order_id','<>',$order->id)
+						   ->orderBy('tbl_visits_order_results.id','desc')
+						   ->orderBy('tbl_visits_order_results.created_at','desc')
+						   ->first();
+	
+			   $result_id = LabResults::create([
+				 'user_num'=>$user_num,
+				 'clinic_num'=>$order->clinic_num,
+				 'patient_num'=>$order->patient_num,
+				 'ext_lab'=>$order->ext_lab,
+				 'order_id'=>$order->id,
+				 'test_id'=>$test->id,
+				 'test_code'=>$test->test_code,
+				 'test_name'=>$test->test_name,
+				 'prev_result_num'=>isset($prev_result)?$prev_result->result_id:NULL,
+				 'referred_tests'=>isset($test) && isset($test->referred_tests)?$test->referred_tests:NULL,
+				 'active'=>'Y'
+				])->id;
+			
+			 //if($test->is_printed=='Y'){
+			//do nothing
+			//}else{	
+			 $new_values = $this->getFieldRefRange($result_id);
+			 $field_num =isset($new_values["field_num"])?$new_values["field_num"]:NULL;
+		     $ref_range =isset($new_values["ref_range"])?$new_values["ref_range"]:NULL; 
+	     	 LabResults::where('id',$result_id)->update(['ref_range'=>$ref_range,'field_num'=>$field_num]);
+		    //}
+			
+			}
+		 }
+	    
+		//update totals
+        $sumpay=DB::table('tbl_bill_payment')->where('bill_num','=',$bill_id)->where('status','Y')->where('payment_type','=','P')->sum('lpay_amount');
+        $sumref=DB::table('tbl_bill_payment')->where('bill_num','=',$bill_id)->where('status','Y')->where('payment_type','=','R')->sum('lpay_amount');
+        $Nbalance=number_format((float) $tbillpricel-$sumpay+$sumref, 2, '.', ',');
+        $balance=floatval(preg_replace('/[^\d.-]/', '', $Nbalance));
+        TblBillHead::where('id',$bill_id)->update(['bill_balance'=>$balance,'lbill_total'=>$tbillpricel,'bill_total'=>$tbillpriced,'ebill_total'=>$tbillpricee]);		
+		 
+	
+	}
+	
+	$location = route('lab.visit.edit',[$lang,$order_id]);	
+	return response()->json(['msg'=>__('Saved succssfully'),'location'=>$location]);
+}
+
+public function saveResults($lang,Request $request){
+	$data = json_decode($request->data,true);
+	$user_num = auth()->user()->id;
+	$fixed_comment = isset($request->fixed_comment) && $request->fixed_comment!=''?$request->fixed_comment:NULL;
+	
+	LabOrders::where('id',$request->order_id)
+		        ->update(['fixed_comment'=>$fixed_comment,'user_num'=>$user_num]);
+				  
+	foreach($data as $k=>$v){
+	   	 $result = 	isset($v["result"])?$v["result"]:NULL;
+		 $result_status = isset($v["result_status"]) && $v["result_status"]!=''?$v["result_status"]:NULL;
+		 $referred_name = isset($v["referred_tests"]) && $v["referred_tests"]!=''?$v["referred_tests"]:NULL;
+		 $field_num = isset($v["field_num"]) && $v["field_num"]!=''?$v["field_num"]:NULL;
+		 $test = LabTests::find($v["test_id"]);
+		 $is_printed = ($test->is_printed=='Y')?'Y':'N';
+		 $sign = $v["sign"];
+		 $ref_range = $v["ref_range"];
+		 $test_type = $v["test_type"];
+		 
+		 //recheck result again for formula
+		 if($v["result"]=='' && ($test_type=='F')){
+			   $result = $this->evaluateFormula($v["test_id"],$request->all_tests); 
+			 }
+		 
+		 //recalculate value for calculate formula
+		 if($v["result"]=='' && ($test_type=='C')){
+			   $arr = $this->evaluateCalcFormula($v["test_id"],$request->all_tests);
+               if(count($arr)){
+				   $calc_result = $arr["calc_result"];
+				   $calc_unit = $arr["calc_unit"];
+				   LabResults::where('id',$v["id"])->update(['calc_result'=>$calc_result,'calc_unit'=>$calc_unit]);
+			   }			   
+			 }		 	 
+		 
+		 //recalculate unit with ranges for all numeric values
+		 if(isset($result) && (is_numeric($result) || $result=='')){
+			 		 
+			 $new_values=$this->getTestState($v["id"],$result,$field_num);
+		     
+			 if($result!=''){
+			   $sign = $new_values["sign"];
+			   $result_status = $new_values["state"];
+		     }
+			 
+			 //if($is_printed=='N'){
+			    $field_num =$new_values["field_num"];
+		        if($new_values["min"] !='' && $new_values["max"]!=''){
+			     $ref_range = $new_values["min"].'-'.$new_values["max"];
+			    }else{
+				if($new_values["min"]=='' && $new_values["max"]!=''){
+					$ref_range ="<".$new_values["max"];
+				}
+				if($new_values["max"]=='' && $new_values["min"]!=''){
+					$ref_range =">=".$new_values["min"];	
+					}
+				if($new_values["max"]=='' && $new_values["min"]==''){
+					$ref_range =NULL;	
+					}	
+				  }
+			 //}	  
+		  }
+		 
+		
+		  
+		  //change result value according to decimal points
+		  if(isset($v["dec_pts"]) && $v["dec_pts"]!='' && isset($result) && is_numeric($result) && $result!=''){
+				 $result = number_format((float)$result,$v["dec_pts"],'.','');
+			       }			
+		 
+		 
+		 if(isset($referred_name)){ 
+		 // Use explode to get an array of substrings
+          $substrings = explode('-', $referred_name);
+        // Get the first substring
+          $referred_tests = $substrings[0];
+		 }else{
+			$referred_tests = NULL; 
+		 }
+		 
+		 LabResults::where('id',$v["id"])
+		 ->update([
+		          'result'=>$result,
+		          'result_status'=>$result_status,
+				  'referred_tests'=>$referred_tests,
+				  'sign'=>$sign,
+				  'field_num'=>$field_num,
+				  'ref_range'=>$ref_range,
+				  'user_num'=>$user_num]);
+	     
+	     }
+		
+	return response()->json(["msg"=>__("Results are saved succssfully")]);
+}
+
+public function saveBill($lang,Request $request){
+	$data = json_decode($request->data,true);
+	$bill = TblBillHead::find($request->bill_id);
+	$user_num = auth()->user()->id;
+	$tbillpricel=0.00;
+    $tbillpriced=0.00;
+	$tbillpricee=0.00;
+	 
+	TblBillSpecifics::where('bill_num',$request->bill_id)->delete();
+	foreach($data as $k=>$v){
+		TblBillSpecifics::create([
+		'bill_num'=>$bill->id,
+		'doctor_num'=>$bill->doctor_num,
+	    'user_num'=>$user_num,
+		'user_type'=>auth()->user()->type,
+		'bill_code'=>$v['bill_code'],
+		'cnss'=>$v['cnss'],
+		'bill_name'=>$v['bill_name'],
+		'bill_quantity'=>$v['bill_quantity'],
+		'lbill_price'=> $v['lbill_price'],
+		'bill_price'=> $v['bill_price'],
+		'ebill_price'=> $v['ebill_price'],
+		'status'=>'O'
+		]);
+	  
+	  $tbillpricel=$tbillpricel+$v['lbill_price'];
+      $tbillpriced=$tbillpriced+$v['bill_price'];
+	  $tbillpricee=$tbillpricee+$v['ebill_price'];
+	  
+	  }
+	  //update totals
+      $sumpay=DB::table('tbl_bill_payment')->where('bill_num','=',$bill->id)->where('status','Y')->where('payment_type','=','P')->sum('lpay_amount');
+      $sumref=DB::table('tbl_bill_payment')->where('bill_num','=',$bill->id)->where('status','Y')->where('payment_type','=','R')->sum('lpay_amount');
+      $Nbalance=number_format((float) $tbillpricel-$sumpay+$sumref, 2, '.', ',');
+      $balance=floatval(preg_replace('/[^\d.-]/', '', $Nbalance));
+      TblBillHead::where('id',$bill->id)->update(['bill_datein'=>Carbon::now()->format('Y-m-d H:i'),'bill_balance'=>$balance,'lbill_total'=>$tbillpricel,'bill_total'=>$tbillpriced,'ebill_total'=>$tbillpricee]);		
+	  $balance = number_format((float) $balance, 2,'.',',');
+	  $sumpay = number_format((float) $sumpay, 2);
+	  $sumref = number_format((float) $sumref, 2);
+	  return response()->json(['msg'=>__('Saved successfully'),'balance'=>$balance,'tpay'=>$sumpay,'trefund'=>$sumref]);	 
+}
+
+public function validateResults($lang,Request $request){
+	$id = $request->order_id;
+	$type = $request->type;
+	switch($type){
+		case 'validate': 
+		$is_valid = $request->is_valid;
+		if($is_valid == 'Y'){
+	       LabOrders::where('id',$id)->update(['status'=>'V','user_num'=>auth()->user()->id]);
+		   $msg = __('Results are validated succssfully');
+	    }else{
+		   LabOrders::where('id',$id)->update(['status'=>'F','user_num'=>auth()->user()->id]);
+		   $msg = __('Results are unvalidated succssfully');
+	      }
+	     $location = route('lab.visit.edit',[$lang,$id]);
+		 return response()->json(['location'=>$location,'msg'=>$msg]);
+		break;
+		case 'done':
+		  LabOrders::where('id',$id)->update(['report_datetime'=>Carbon::now()->format('Y-m-d H:i'),'status'=>'F','user_num'=>auth()->user()->id]);
+		  $msg = __('Results are done succssfully');
+		  $location = route('lab.visit.edit',[$lang,$id]);
+		  return response()->json(['location'=>$location,'msg'=>$msg]);
+		 break;
+	}
+	
+}
+
+
+public function destroy($lang,Request $request)
+    {
+	  $id = $request->id;
+	  
+	 Switch($request->type){
+	   case 'inactivate':
+		//destroy order with all its results
+		LabOrders::where('id',$id)->update(['active'=>'N','user_num'=>auth()->user()->id]);
+		LabResults::where('order_id',$id)->update(['active'=>'N','user_num'=>auth()->user()->id]);
+		$msg= __('Cancelled Successfully');
+		break;
+	 case 'activate':
+	  	 //activate order with all its results
+		 LabOrders::where('visit_num',$id)->update(['active'=>'Y','user_num'=>auth()->user()->id]);
+		 LabResults::where('order_id',$id)->update(['active'=>'Y','user_num'=>auth()->user()->id]);
+		 $msg= __('Activated Successfully');
+	    break;
+	 }
+	return response()->json(["msg"=>$msg]);
+
+	}	
+	
+public function fillPatientDatalab($lang, Request $request)
+     {
+    
+        $id= $request->id ;
+        
+        $Patient_Data = Patient::where('id',$id)->first();
+      
+	  	  
+	  return response()->json(['patient'=>$Patient_Data]);
+
+     }
+
+public function printOrder($lang,Request $request){
+	$order = LabOrders::find($request->order_id);
+	$patient = Patient::find($order->patient_num);
+	$doctor = Doctor::where('doctor_user_num',$order->ext_lab)->first();
+	$ext_lab = ExtLab::where('lab_user_num',$order->ext_lab)->first();
+	$order_tests = json_decode($order->tests,true);
+	//category list
+	$categories = DB::table('tbl_lab_tests as t')
+			      ->select(DB::raw("IFNULL(cat.id,0) as id"),DB::raw("IFNULL(cat.descrip,'Other') as descrip"),'cat.testord')
+				  ->leftjoin('tbl_lab_categories as cat','t.category_num','cat.id')
+				  ->whereIn('t.id',$order_tests)
+				  ->orderBy('cat.testord')
+				  ->distinct()
+				  ->get();
+	
+	$groups = json_decode($order->chosen_codes,true);
+	$arr = array();
+	//add group with tests
+	foreach($groups as $tst_id){
+		$grp = LabTests::find($tst_id);
+		$category = DB::table('tbl_lab_categories')->where('id',$grp->category_num)->value('descrip');
+		if($grp->is_group=='Y'){
+			$tests = LabTests::where('group_num',$grp->id)->pluck('test_name')->toArray();
+			$arr[$category][$grp->test_name]=$tests;
+		}else{
+			$arr[$category][$grp->test_name]='NG';
+		}
+	}			  
+    
+	$data = ['patient'=>$patient,'doctor'=>$doctor,'ext_lab'=>$ext_lab,'order'=>$order,'arr'=>$arr];
+	$pdf = PDF::setOptions(['defaultFont' => 'sans-serif','isHtml5ParserEnabled' => true,'isRemoteEnabled' => true,'isJavascriptEnabled'=>true])
+                       -> loadView('lab.visit.orders.OrderPDF', $data);
+    $pdf->output();
+    $dom_pdf = $pdf->getDomPDF();
+	$canvas = $dom_pdf->get_canvas();
+            
+			//$canvas->page_text(250, 820, "Page {PAGE_NUM} ".__('of')." {PAGE_COUNT}", null, 10, array(0, 0, 0));
+            $canvas->page_text(50, 820, "Page {PAGE_NUM}".__('of')." {PAGE_COUNT}", null, 8, array(0, 0, 0)); // Bottom-left page number
+            $canvas->page_text(500, 820, Carbon::now()->format('d/m/Y H:i'), null, 8, array(0, 0, 0)); // Bottom-right current datetime
+			  
+//dd($arr);
+return $pdf->stream();
+}
+	
+public function printResults($lang,Request $request){
+	$order_id = $request->order_id;
+	$type= 'pdf';
+	return $this->getPDF($order_id,$type);
+}
+
+function getPDF($order_id,$type){
+	        
+			$order = LabOrders::find($order_id);
+			$patient = Patient::find($order->patient_num);
+			$doctor = Doctor::where('doctor_user_num',$order->ext_lab)->first();
+			$ext_lab = ExtLab::where('lab_user_num',$order->ext_lab)->first();
+			$lab = Clinic::find($order->clinic_num);
+			$first_ins = ExtIns::find($patient->first_ins);
+			$second_ins = ExtIns::find($patient->second_ins);
+			$documents = DOCSResults::where('name','not like','%.pdf')->where('active','Y')->where('order_id',$order->id)->get();
+			
+	
+	       $results = DB::table('tbl_visits_order_results as r')
+	               ->select('r.id','t.test_name','r.ref_range',
+				            DB::raw("IFNULL(g.test_name,'Other') as group_name"),
+							DB::raw("IFNULL(g.descrip,'') as group_instruction"),
+							DB::raw("IFNULL(g.clinical_remark,'') as group_clinical_remark"),
+							DB::raw("IFNULL(t.unit,'') as unit"),
+							't.test_type','r.test_id',
+							DB::raw("IFNULL(t.category_num,0) as category_num"),
+							DB::raw("IFNULL(r.result,'') as result"),
+							DB::raw("IFNULL(r.sign,'') as sign"),
+							't.testord as position',
+							DB::raw("IFNULL(prev.result,'') as prev_result_val"),
+							DB::raw("IFNULL(prev.order_id,'') as prev_order_id"),
+							DB::raw("IFNULL(r.field_num,'') as field_num"),
+							DB::raw("IFNULL(t.clinical_remark,'') as clinical_remark"),
+							DB::raw("IFNULL(t.descrip,'') as method_instruction"),
+							DB::raw("IFNULL(t.test_rq,'') as code_remark"),
+							't.is_printed','r.calc_result','r.calc_unit',
+							'g.is_printed as group_printed'
+							)
+				   ->join('tbl_lab_tests as t',function($q){
+					   $q->on('t.id','r.test_id');
+					   $q->where('t.is_group','<>','Y');
+					   $q->orWhereNULL('t.is_group');
+				   })
+				   ->join('tbl_visits_orders as o','o.id','r.order_id')
+				   ->leftjoin('tbl_lab_tests as g',function($q){
+				               $q->on('g.id','t.group_num');
+							   $q->where('g.is_group','Y');
+				          })
+				  ->leftjoin('tbl_visits_order_results as prev',function($q){
+				               $q->on('prev.id','r.prev_result_num');
+							   $q->where('prev.active','Y');
+				          })
+				  ->where('r.active','Y')
+                  ->where('r.order_id',$order_id)
+	              ->orderBy('g.testord')
+				  ->orderBy('t.testord')
+				  ->get();	
+				
+				
+				$order_tests = json_decode($order->tests,true);	
+				
+			    $categories = DB::table('tbl_lab_tests as t')
+			                  ->select(DB::raw("IFNULL(cat.id,0) as id"),DB::raw("IFNULL(cat.descrip,'Other') as descrip"),'cat.testord')
+							  ->leftjoin('tbl_lab_categories as cat','t.category_num','cat.id')
+							  ->whereIn('t.id',$order_tests)
+							  ->orderBy('cat.testord')
+							  ->distinct()
+							  ->get();
+							  
+			    
+				   $phlebotomy = collect();
+				   if(isset($order->collection_date) && $order->collection_date!=''){
+					   $phlebotomy = DB::table('tbl_lab_tests as t')
+					                 ->select('t.id','t.testord','t.test_name','t.preanalytical')
+									 ->join('tbl_visits_orders as o', function ($join) {
+                                        $join->on(DB::raw('JSON_CONTAINS(o.chosen_codes, CAST(t.id AS JSON))'), '=', DB::raw('1'));
+                                       })
+									 ->where('o.id',$order->id)->orderBy('t.testord')
+									 ->distinct()
+									 ->get();  
+				   
+				   }
+					   
+				   //get previuos validated active order for the patient and lab    
+			       /*$prev = LabOrders::where('active','Y')
+			                   ->where('patient_num',$order->patient_num)
+                               ->where('clinic_num',$order->clinic_num) 									 
+			                   ->where('id','<>',$order_id)
+							   ->where('created_at','<',$order->created_at)
+							   ->where('status','V')
+							   ->orderBy('created_at', 'desc')->first();
+			
+					 
+					 $prev_result = collect();
+					 $prev_date='';
+					 if(isset($prev)){
+					  $prev_result = LabResults::select('test_id','result','result_status')
+					                ->where('order_id',$prev->id)
+					                ->whereIn('test_id',$order_tests)
+									->where('active','Y')->get();
+					  $prev_date=	Carbon::parse($prev->created_at)->format('Y-m-d');			
+					 }*/
+					 //dd($prev_result);
+					
+				   /*$calculate = DB::table('tbl_lab_tests_formulas as f')
+				                ->select('f.*')
+								->join('tbl_lab_tests as t','t.id','f.test_id')
+								->whereIn('t.id',$order_tests)
+								->where('t.test_type','C')
+								->orderBy('t.testord')->get();*/
+								
+				    $branch = Clinic::find($order->clinic_num);
+					$tel = isset($branch->telephone) && $branch->telephone!=''?'Tel: '.$branch->telephone.' , ':'';
+					$whatsapp = isset($branch->whatsapp) && $branch->whatsapp!=''?'Whatsapp: '.$branch->whatsapp.' , ':'';
+					$website = isset($branch->website) && $branch->website!=''?' '.$branch->website.' , ':'';
+			        $address = isset($branch->full_address) && $branch->full_address!=''?'Address: '.$branch->full_address:'';
+			        $branch_data = $tel.$whatsapp.$website.$address;               
+				
+				
+			$data = ['patient'=>$patient,'lab'=>$lab,'first_ins'=>$first_ins,'second_ins'=>$second_ins,
+			         'doctor'=>$doctor,'ext_lab'=>$ext_lab,'order'=>$order,
+					 'results'=>$results,'categories'=>$categories,
+					 'documents'=>$documents,'branch_data'=>$branch_data,
+					 'phlebotomy'=>$phlebotomy]; 
+           
+		    
+			$pdf = PDF::setOptions(['defaultFont' => 'sans-serif','isHtml5ParserEnabled' => true,'isRemoteEnabled' => true,'isJavascriptEnabled'=>true,'isPHPEnabled'=>true])
+                       -> loadView('lab.visit.ResultsPDF', $data);
+            $pdf->output();
+            $dom_pdf = $pdf->getDomPDF();
+	        $canvas = $dom_pdf->get_canvas();
+			$canvas->page_text(250, $canvas->get_height() - 65, "Page {PAGE_NUM} of {PAGE_COUNT}", null, 8, [0, 0, 0]);		   
+		   
+			//$print_date= __('Print Date: ').Carbon::now()->format('d/m/Y H:i');
+			// Add a horizontal line
+             // Set a page_script to draw a line on every page
+			 //$canvas->page_text(450, 805, $print_date, null, 8, array(0, 0, 0)); // Bottom-right current datetime
+			 //$canvas->page_text(250, 805, "Page {PAGE_NUM} ".__('of')." {PAGE_COUNT}", null, 8, array(0, 0, 0));//Bottom-center
+			 //$canvas->page_text(120, 820, $branch_data, null, 8, array(0, 0, 0)); // Bottom-left page number
+
+			$pdf_docs = DOCSResults::where('active','Y')->where('order_id',$order->id)->where('name','like','%.pdf')->get();
+			
+			if($pdf_docs->count()>0){
+				$pdf_merge = PDFMerger::init();
+				$path = storage_path('app/private/tmp');
+					if (!file_exists($path)) {
+							mkdir($path, 0775, true);
+					}
+				$name=date("Y-m-d")."_".uniqid() . ".pdf";
+				$pdf_file = $path . $name;
+				file_put_contents($pdf_file, $pdf->output());
+				$pdf_merge->addPDF( $pdf_file, 'all');
+				foreach($pdf_docs as $d){
+						$pdf_path = storage_path('app/private/'.$d->path);
+						$pdf_merge->addPDF($pdf_path, 'all');
+					}
+				//delete old existing files
+				 $files = glob($path.'*'); // get all file names
+					foreach($files as $file){ // iterate files
+					  if(is_file($file)) {
+						unlink($file); // delete file
+					  }
+					}
+				
+				switch($type){
+					case 'pdf':
+					return $pdf_merge->stream();
+					break;
+					case 'email':
+					return $pdf_merge->output();
+					break;
+				}
+			}else{
+				 switch($type){
+					case 'pdf':
+					return $pdf->stream();
+					break;
+					case 'email':
+					return $pdf->output();
+					break;
+				}
+			}
+}
+
+//send results to patient by email 
+public function sendResults($lang,Request $request){
+  //get order id 
+  $order_id  = $request->order_id;
+  $order = LabOrders::find($order_id);
+  
+  $patient_num = $order->patient_num;
+  $patient = Patient::find($patient_num);
+  
+  
+  if(!$patient->receive_mail){
+	 $msg = __("Error: Patient does not accept to be contacted by email");
+	 return response()->json(['error'=>$msg]); 
+  }
+  
+  $pat_email = $patient->email;
+  
+  if( $pat_email == NULL ||  $pat_email==''){
+	  $msg = __("Error: No email is provided for this patient");
+	  return response()->json(['error'=>$msg]);
+  }
+  
+  if($patient->middle_name == NULL || $patient->middle_name ==''){
+     $pat_name = $patient->first_name.' '.$patient->last_name;
+  }else{
+	  $pat_name = $patient->first_name.' '.$patient->middle_name.' '.$patient->last_name; 
+  }
+  
+  
+ 
+    //generate pdf to send by email 
+    $pdf = $this->getPDF($order_id,'email');
+  
+   
+    $lab = Clinic::find($order->clinic_num);   
+    
+	$title=__('Hello').' '.$pat_name.' , ';
+	$msg1=__('You will find attached your results document').' . ';
+	$msg2=__('This document is sent from lab').' : '.$lab->full_name.' . ';
+    
+	$from = $lab->full_name;
+	$reply_to_name = __("No reply").','.$lab->full_name;
+	$reply_to_address = isset($lab->email)? $lab->email:'noreply@email.com';
+	$subject = __('Patient results document');
+    
+	$details = [ 'title'=>$title,'msg1'=>$msg1,'msg2'=>$msg2,
+	             'branch_name'=>$lab->full_name,
+				 'branch_address'=>$lab->full_address,
+				 'branch_tel'=>$lab->telephone,
+				 'branch_fax'=>$lab->fax,
+				 'branch_email'=>$lab->email,
+				 'from'=>$from,'reply_to_name'=>$reply_to_name,'reply_to_address'=>$reply_to_address,'subject'=>$subject];
+	 
+	 $to  =  $pat_email;
+	 $visit_date = Carbon::parse($order->order_datetime)->format('Y-m-d');
+	 $pdf_name = 'Result-'.$visit_date.'.pdf';
+	 Mail::to($to)->send(new SettingMailAttach($details,$pdf,$pdf_name));
+	 if(Mail::failures()){
+		$msg = __("Email: Failed");
+		return response()->json(['warn'=>$msg]); 
+	 }else{
+		 $msg = __("Email : Success");
+		return response()->json(['success'=>$msg]);	
+		
+	 }
+	
+   
+	
+}
+
+public function uploadAttach($lang,Request $request)
+
+    {
+        
+		$this->validate($request, [
+
+				'files' => 'required',
+				'files.*'=>'mimes:jpg,jpeg,png,gif,bmp,tiff,svg,webp,pdf|max:3072'
+			  ],[
+				 'files.required' => __('Please choose a document of type image/pdf'),
+				 'files.*.mimes' => __('Please insert a document of type image/pdf'),
+				 'files.*.max'   => __('Document should be less than 3 MB')
+			
+			]);
+       
+		$uid = auth()->user()->id;
+		$order_id = $request->doc_order_id;
+		
+		$image_path = storage_path('app/7mJ~33/Documents');
+		if (!file_exists($image_path)){
+				mkdir($image_path, 0775, true);
+			}
+		
+		if($request->hasfile('files')) {
+			
+			  foreach($request->file('files') as $file){
+			  
+			  $image_name =  date('Ymd').'_'.uniqid().'.'.$file->getClientOriginalExtension();
+              $file->move($image_path, $image_name);
+			  $notes = $request->description;
+			  $path = 'Documents';
+			  
+				DOCSResults::create([
+					'order_id' => $order_id,
+					'notes' => $notes,
+					'name' => $file->getClientOriginalName(),
+					'path' => $path.'/'.$image_name,
+					'user_num' => $uid,
+					'active' => 'Y'
+				]);
+			  }
+           
+			return back()->with('success',__('Documents Uploaded successfully'));
+			
+			 }
+    
+	}
+
+ public function destroyAttach($lang,Request $request)
+
+    {
+    	$doc = DOCSResults::find($request->image_id);
+        Storage::disk('private')->delete($doc->path);
+        $doc->delete();		
+    	return back()->with('success','Document removed successfully.');	
+
+    }
+
+
+public function getProfileTests($lang,Request $request){
+	$prof_id = $request->id;
+	$profile = DB::table('tbl_lab_tests_profiles')->find($prof_id);
+	return response()->json(['tests'=>json_decode($profile->profile_tests,true)]);
+}
+
+function SavePay($lang,Request $request){
+
+$someArray = [];
+$someArray=json_decode($request->data,true); 		
+$user_id = auth()->user()->id;
+$user_type= auth()->user()->type;
+$order_id= $request->order_id;
+//$date_pay=$request->date_pay;
+$bill_id=$request->bill_id;
+$clinic_id=$request->id_facility;
+//$valamount=$request->valamount;
+$balance=$request->balance;
+//$type="P";
+//$selectmethod=$request->selectmethod;
+//if ($request->status=='M'){
+ $sqlReq = "update tbl_bill_payment set status='N' where payment_type='P' and bill_num=".$request->bill_id;   			   
+ DB::select(DB::raw("$sqlReq"));		
+//}
+
+//$sqlReq = "insert into tbl_bill_payment (datein,bill_num,payment_amount,payment_type,reference,user_num,user_type) values('".$date_pay."','".$bill_id."','".$valamount."','".$type."','".$selectmethod."','".$user_id."','".$user_type."')";
+//DB::select(DB::raw("$sqlReq"));
+//$sumpay=TblBillPayment::where('bill_num','=',$bill_id)->where('payment_type','=','P')->sum('payment_amount');
+//$sumref=TblBillPayment::where('bill_num','=',$bill_id)->where('payment_type','=','R')->sum('payment_amount');
+foreach ($someArray as $key=>$area)
+{
+ //key equal zero is the first row 
+ 
+ if($key!=0){
+   $code = $area["CODE"];
+   $date = $area["DATE"];
+   $type=trim($area["TYPE"]);
+   $price = $area["PRICE"];
+   $currency = $area["CURRENCY"];
+   $rate = $area["RATE"];
+   $total = $area["TOTAL"];
+   //$typepay = TblBillPaymentMode::where('name_fr',$type)->where('status','O')->first();
+    if ($lang=='fr'){	
+  $typepay = TblBillPaymentMode::where('name_fr',$type)->where('status','O')->first();
+   }else{
+	$typepay = TblBillPaymentMode::where('name_eng',$type)->where('status','O')->first();   
+   }
+   $reference= $typepay->id;
+   $assurance=$typepay->assurance;
+   $sqlInsertF = "insert into tbl_bill_payment(datein,bill_num,clinic_num,payment_amount,payment_type,currency,dolarprice,lpay_amount,reference,user_type,assurance,order_num,user_num,status) values('".
+				 $date."','".
+				 $bill_id."','".
+				 $clinic_id."','".
+				 $price."','P','".
+				 $currency."','".
+				 $rate."','".
+				 $total."','".
+				 $reference."','".
+				 $user_type."','".
+				 $assurance."','".
+				 $order_id."','".
+				 $user_id."','Y')";
+	DB::select(DB::raw("$sqlInsertF"));
+ 
+ }	
+ }
+$sumpay=TblBillPayment::where('bill_num','=',$bill_id)->where('status','Y')->where('payment_type','=','P')->sum('lpay_amount');
+$sumref=TblBillPayment::where('bill_num','=',$bill_id)->where('status','Y')->where('payment_type','=','R')->sum('lpay_amount');
+$ReqBill=TblBillHead::where('id',$bill_id)->where('status','O')->first();
+$Nbalance=number_format((float)$ReqBill->lbill_total-$sumpay+$sumref, 2, '.', ',');
+$balance=floatval(preg_replace('/[^\d.-]/', '', $Nbalance));
+
+TblBillHead::where('id',$bill_id)->update([
+				                  'bill_balance'=>$balance
+								  ]);	
+$balance=number_format((float)$ReqBill->lbill_total-$sumpay+$sumref, 2, '.', ',');
+								  
+$msg='Payment Saved Success';
+	return response()->json(['success'=>$msg,'sumpay'=>$sumpay,'sumref'=>$sumref,'nbalance'=>$balance]);
+
+		  
+}		  
+function SaveRefund($lang,Request $request){
+$someArray = [];
+$someArray=json_decode($request->data,true); 		
+$user_id = auth()->user()->id;
+$user_type= auth()->user()->type;
+//$date_pay=$request->date_pay;
+$bill_id=$request->bill_id;
+$clinic_id=$request->id_facility;
+$order_id=$request->order_id;
+//$valamount=$request->valamount;
+$balance=$request->balance;
+//$type="P";
+//$selectmethod=$request->selectmethod;
+//if ($request->status=='M'){
+ $sqlReq = "update tbl_bill_payment set status='N' where payment_type='R' and bill_num=".$request->bill_id;   			   
+ DB::select(DB::raw("$sqlReq"));		
+//}
+
+//$sqlReq = "insert into tbl_bill_payment (datein,bill_num,payment_amount,payment_type,reference,user_num,user_type) values('".$date_pay."','".$bill_id."','".$valamount."','".$type."','".$selectmethod."','".$user_id."','".$user_type."')";
+//DB::select(DB::raw("$sqlReq"));
+//$sumpay=TblBillPayment::where('bill_num','=',$bill_id)->where('payment_type','=','P')->sum('payment_amount');
+//$sumref=TblBillPayment::where('bill_num','=',$bill_id)->where('payment_type','=','R')->sum('payment_amount');
+foreach ($someArray as $key=>$area)
+{
+ //key equal zero is the first row 
+ 
+ if($key!=0){
+   $code = $area["CODE"];
+   $date = $area["DATE"];
+   $type=trim($area["TYPE"]);
+    $currency = $area["CURRENCY"];
+	 $rate = $area["RATE"];
+   $total = $area["TOTAL"];
+   $price = $area["PRICE"];
+  if ($lang=='fr'){	
+  $typepay = TblBillPaymentMode::where('name_fr',$type)->where('status','O')->first();
+   }else{
+	$typepay = TblBillPaymentMode::where('name_eng',$type)->where('status','O')->first();   
+   }
+   $reference= $typepay->id;
+   $assurance=$typepay->assurance;
+   $sqlInsertF = "insert into tbl_bill_payment(datein,bill_num,clinic_num,payment_amount,payment_type,currency,dolarprice,lpay_amount,reference,user_type,assurance,order_num,user_num,status) values('".
+				 $date."','".
+				 $bill_id."','".
+				 $clinic_id."','".
+				 $price."','R','".
+				 $currency."','".
+				 $rate."','".
+				 $total."','".
+				 $reference."','".
+				 $user_type."','".
+				 $assurance."','".
+				 $order_id."','".
+				 $user_id."','Y')";
+	DB::select(DB::raw("$sqlInsertF"));
+ 
+ }	
+ }
+$sumpay=TblBillPayment::where('bill_num','=',$bill_id)->where('status','Y')->where('payment_type','=','P')->sum('lpay_amount');
+$sumref=TblBillPayment::where('bill_num','=',$bill_id)->where('status','Y')->where('payment_type','=','R')->sum('lpay_amount');
+$ReqBill=TblBillHead::where('id',$bill_id)->where('status','O')->first();
+
+$Nbalance=number_format((float)$ReqBill->lbill_total-$sumpay+$sumref+$ReqBill->tvq+$ReqBill->tps, 2, '.', ',');
+$balance=floatval(preg_replace('/[^\d.-]/', '', $Nbalance));
+
+TblBillHead::where('id',$bill_id)->update([
+				                  'bill_balance'=>$balance
+								  ]);	
+$balance=number_format((float)$balance, 2, '.', ',');
+
+$msg='Refund Saved Success';
+	return response()->json(['success'=>$msg,'sumpay'=>$sumpay,'sumref'=>$sumref,'nbalance'=>$balance]);
+
+
+}		  		  
+	
+
+public function get_referredtests($lang,Request $request){
+    $id_clinic = auth()->user()->clinic_num;
+	$options = ExtLab::select(DB::raw('concat(id,"-",full_name) as value'), 'full_name as label')->where('status','A')->where('clinic_num',$id_clinic)
+					 ->orderBy('id','desc')->get();
+	// Add the "Choose" option with an empty ID
+    $chooseOption = ['label' => __('Choose'), 'value' => ''];
+    $options->prepend($chooseOption);
+	
+	return response()->json($options);			 
+			
+}
+
+
+}
+

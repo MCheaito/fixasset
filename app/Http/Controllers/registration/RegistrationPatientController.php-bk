@@ -1,0 +1,171 @@
+<?php
+
+namespace App\Http\Controllers\registration;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use App\Models\Clinic;
+use App\Models\Patient;
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\SettingMail;
+//use App\Models\TblVisits;
+use DB;
+use Alert;
+
+class RegistrationPatientController extends Controller
+{
+    public function showRegistration()
+    {
+	   $clinic=Clinic::where('active','O')->get(['id','full_name']);
+       return view('registration.inforegister')->with(['clinic'=>$clinic]);
+    }
+  
+	public function confirmB($lang,Request $request)
+    {
+        
+        return view('registration.confirmation');
+    }
+   
+public function registerB($lang,Request $request)
+    {
+       if (str_contains($request->ramq,'_')){
+		  $request->validate([
+           'fname' => ['required', 'string', 'max:255'],
+           'lname' => ['required', 'string', 'max:255'],  
+           'tel' => ['required','regex:/^[0-9]{3}-[0-9]{3}-[0-9]{4}$/'],
+		   'email' => ['required','email'],
+		   'password' => ['required', 'string', 'min:6', 'confirmed'],
+		   'ramq'=> ['required','regex:/^[A-Z]{4}-[0-9]{4}-[0-9]{4}$/']
+		    ],[
+			'fname.required' => __('Please fill your first name'),
+			'lname.required' => __('Please fill your last name'),
+			'tel.required' => __('Please fill your phone'),
+			'tel.regex' => __('Your phone number must be of format 000-000-0000'),
+			'email.required' => __('Please fill your email address'),
+			'email.email' => __('Please fill a valid email address'),
+			'password.required' => __('Please fill your password'),
+			'password.confirmed' => __('Password confirmation does not match'),
+			'password.min'=>__('The password must be at least 6 characters'),
+			'ramq.regex'=>__('Please validate the RAMQ')
+			]);
+	   }else{
+	   
+	   $request->validate([
+           'fname' => ['required', 'string', 'max:255'],
+           'lname' => ['required', 'string', 'max:255'],  
+           'tel' => ['required','regex:/^[0-9]{3}-[0-9]{3}-[0-9]{4}$/'],
+		   'email' => ['required','email'],
+		   'password' => ['required', 'string', 'min:6', 'confirmed']
+		    ],[
+			'fname.required' => __('Please fill your first name'),
+			'lname.required' => __('Please fill your last name'),
+			'tel.required' => __('Please fill your phone'),
+			'tel.regex' => __('Your phone number must be of format 000-000-0000'),
+			'email.required' => __('Please fill your email address'),
+			'email.email' => __('Please fill a valid email address'),
+			'password.required' => __('Please fill your password'),
+			'password.confirmed' => __('Password confirmation does not match'),
+			'password.min'=>__('The password must be at least 6 characters')
+			
+			]);
+	   }
+			
+$ids="";
+$msg="";		
+// first and last name 
+$patientexist = "SELECT COUNT(id) AS count, GROUP_CONCAT(id) AS ids FROM tbl_patients WHERE status='O' AND clinic_num = " . trim($request->clinic_num) . " AND TRIM(UPPER(last_name)) = '" . trim(strtoupper($request->lname)) . "'" . " AND TRIM(UPPER(first_name)) = '" . trim(strtoupper($request->fname)) . "'";
+$resultData = DB::select(DB::raw($patientexist));
+$count0 = $resultData[0]->count;
+if ($count0>=1){
+$ids = $resultData[0]->ids;
+$msg=__('This Patient already exists :');
+}
+// email 
+$emailexist = "SELECT COUNT(id) AS count, GROUP_CONCAT(id) AS ids FROM tbl_patients WHERE status='O' AND clinic_num = " . trim($request->clinic_num) . " AND TRIM(UPPER(email)) = '" . trim(strtoupper($request->email)). "'";
+$resultData1 = DB::select(DB::raw($emailexist));
+$count1 = $resultData1[0]->count;
+if ($count1>=1){
+$ids = $resultData1[0]->ids;
+$msg=__('This Email already exists:');
+}
+// Cell Phone 
+$phoneexist = "SELECT COUNT(id) AS count, GROUP_CONCAT(id) AS ids FROM tbl_patients WHERE status='O' AND clinic_num = " . trim($request->clinic_num) . " AND TRIM(UPPER(cell_phone)) = '" . trim(strtoupper($request->tel)). "'";
+$resultData2 = DB::select(DB::raw($phoneexist));
+$count2 = $resultData2[0]->count;
+if ($count2>=1){
+$ids = $resultData2[0]->ids;
+$msg=__('This Cell Phone already exists:');
+} 
+ if(($count0>=1)||($count1>=1)||($count2>=1)){
+		
+	return back()->withinput()->withErrors(['msg' => $msg]);
+ }else{          
+			
+        $pat_id = Patient::create([
+            'clinic_num'=>$request->clinic_num,
+            'first_name'=>strtoupper($request->fname),
+            'last_name'=>strtoupper($request->lname),
+            'birthdate'=>$request->birthdate,
+            'ramq'=>$request->ramq,
+            'cell_phone'=>$request->tel,
+            'sex'=>$request->gender,
+            'status' => 'O',
+            'email'=>$request->email	
+			])->id;
+			
+		$user_id = User::create([
+            'fname' => strtoupper($request->fname),
+			'lname' => strtoupper($request->lname),
+            'email' => $request->email,
+			'username' => $request->email,
+			'clinic_num' => $request->clinic_num,
+			'username' => $request->email,
+			'type' =>'3',
+			'password' => Hash::make($request->password),
+			'active' => 'N'
+            ])->id;
+		
+	//send mail 	
+	 $to=$request->email;
+	  $unhashedKey = bin2hex ( openssl_random_pseudo_bytes ( 50 ) );
+      $hashedKey = hash ( 'sha256', $unhashedKey );
+      $hashedKey = str_replace("'","",$hashedKey); 
+	  $clinic = Clinic::find($request->clinic_num);
+	  $link = route('inforegister_confirm',['locale'=>$lang,'key'=>$hashedKey]);
+	  $from = $clinic->full_name;
+	  $reply_to_name = __("No reply").','.$clinic->full_name;
+	  $reply_to_address = isset($clinic->email)? $clinic->email:'noreply@email.com';
+	  $pat_name = $request->fname.' '.$request->lname;
+	  $msg1 = 'Hello'.' '.$pat_name;
+	  $msg2=__('Please click on link below to confirm your account');
+	  
+	  $details = [        'msg1' => $msg1,
+	                      'msg2'=>$msg2,
+			              'link'=>$link,
+			              'branch_name'=>$clinic->full_name,
+						  'branch_address'=>$clinic->full_address,
+						  'branch_tel'=>$clinic->telephone,
+				          'branch_fax'=>$clinic->fax,
+						  'branch_email'=>$clinic->email,
+						  'from'=>$from,
+						  'reply_to_name'=>$reply_to_name,
+						  'reply_to_address'=>$reply_to_address
+				];
+	    
+		$subject = __('Message Confirmation Registration');  
+		//dd($details);
+		Mail::to($to)->send(new SettingMail($details,$subject,'patient'));		
+		
+        return redirect()->route('confirmB',['locale'=>$lang,'key'=>$hashedKey]);
+    }
+	}
+	
+ public function inforegister_confirm($lang,Request $request){
+	 $key = $request->key;
+	 //dd($key);
+	 User::where('id',$user_id)->update(['active'=>'O']);
+	 return redirect(app()->getLocale().'/login');
+ }	
+}

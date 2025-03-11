@@ -1,0 +1,47 @@
+<!--
+ DEV APP
+ Created date : 31-3-2023
+ Data MAX printer
+ Margins: margin-top,margin-right,margin-bottom,margin-left
+-->
+<!DOCTYPE html>
+<html>
+  <head>
+	 <meta name="viewport" content="width=device-width, initial-scale=1">
+     
+	 <title>{{__('Items labels')}}</title>
+	 <style>
+	 
+	   @page { margin: 0px 0px 0px 87px; }
+	 </style>
+  <head>
+  <body>
+   @php $i=0;@endphp
+   @foreach ($items as $item)
+   @php 
+   $item_specs = json_decode($item->items_specs,true);
+   $model = isset($item_specs[0])?$item_specs[0]:'';
+   $color = isset($item_specs[1])?$item_specs[1]:'';
+   $chassis = isset($item_specs[2])?$item_specs[2]:'';
+   $pont = isset($item_specs[5])?$item_specs[5]:'';
+   $branche = isset($item_specs[6])?$item_specs[6]:'';
+   $description = isset($item->description)?(strlen($item->description)>20?substr($item->description,0,20).'...':$item->description):'';
+   @endphp
+   <div style="width:100%;@if($i>0)page-break-before:always;@endif"> 
+		
+		
+	    <div style="transform-origin: 10px 20px; transform: rotate(90deg);">
+			 @switch($item->gen_types)
+			  @case(1)
+			  <span><span style="font-size:11px;">{{substr($item->supplier_name,0,3).'-'.$model}}<br/>{{$color}}<br/>{{$chassis.'/'.$pont.' '.$branche.' ('.$item->sel_price.'$)'}}</span><br/><br/><span style="font-size:10px;">{{$item->barcode}}</span><br/>{!! DNS1D::getBarcodeHTML($item->barcode, 'C128',0.95,22) !!}</span>
+			  @break
+			  @default
+			  <span><span style="font-size:11px;">{{substr($item->supplier_name,0,3)}}<br/>{{$description}}<br/>{{' ('.$item->sel_price.'$)'}}</span><br/><br/><span style="font-size:10px;">{{$item->barcode}}</span><br/>{!! DNS1D::getBarcodeHTML($item->barcode, 'C128',0.95,22) !!}</span>
+             @endswitch 
+         </div>
+       		
+	</div>
+	@php $i++;@endphp
+    @endforeach			
+  </body>
+</html>  	

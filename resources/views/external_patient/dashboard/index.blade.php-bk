@@ -1,0 +1,580 @@
+<!--
+    DEV APP
+    Created date : 30-8-2023
+ -->
+@extends('gui.main_gui')
+
+@section('content')
+<div class="container-fluid">
+        <!-- Small boxes (Stat box) -->
+        <div class="row">
+          <div class="col-md-3">
+            <!-- small box -->
+            <div class="small-box bg-teal">
+   		        <div class="inner">
+				     <div><b>{{$patient->first_name.' '.$patient->last_name}}</b></div>
+					 @isset($patient->ramq)<div>{{__('RAMQ').' : '.$patient->ramq}}</div>@endif
+					 @isset($patient->email)<div>{{__('Email').' : '.$patient->email}}</div>@endif
+					 @isset($patient->tel)<div>{{__('Landline Phone').' : '.$patient->tel}}</div>@endif
+					 @isset($patient->cell_phone)<div>{{__('Cell Phone').' : '.$patient->cell_phone}}</div>@endif
+				</div>
+				<a href="javascript:void(0)" class="small-box-footer" onclick="event.preventDefault();$('#personalInfoModal').modal('show');">More info <i class="fas fa-arrow-circle-right"></i></a>
+            </div>
+          </div><!-- ./col -->
+         <div class="col-md-9">
+		    <div class="card">
+					<div class="card-header card-menu">
+					      <div class="row m-1 mb-2">
+							<div  id="div_inv_balance" class="col-md-2 col-6" style="display:none;">
+							  <label class="text-dark" style="font-size:0.75em;">{{__('Inv. due Amnt')}}</label>
+							  <input type="text" disabled id="inv_balance" class="form-control label-size bg-gradient-whitesmoke" value="{{$inv_balance}}"/>
+							</div>
+							<div id="div_bill_balance" class="col-md-2 col-6" style="display:none;">
+							  <label class="text-dark" style="font-size:0.75em;">{{__('Med. due Amnt')}}</label>
+							  <input type="text" disabled id="bill_balance" class="form-control label-size bg-gradient-whitesmoke" value="{{ $bill_balance}}"/>
+							</div>
+						 </div>
+						 <div class="col-12">
+						 <ul class="nav nav-pills" style="font-size:1rem;">
+					        <li class="nav-item"><a class="nav-link active" href="#dashboard_events" data-toggle="tab">{{__('Appointments')}}</a></li>
+					        <li class="nav-item"><a class="nav-link" href="#dashboard_visits" data-toggle="tab">{{__('Visits')}}</a></li>
+					        <li class="nav-item"><a class="nav-link" href="#dashboard_hist" data-toggle="tab">{{__('History')}}</a></li>
+					        <li class="nav-item"><a class="nav-link" href="#dashboard_treatment_plans" data-toggle="tab">{{__('Treatment plan')}}</a></li>
+					        <li class="nav-item"><a class="nav-link" href="#dashboard_medical_documents" data-toggle="tab">{{__('General documents')}}</a></li>
+							<li class="nav-item"><a class="nav-link" href="#dashboard_rx" data-toggle="tab">{{__('RX')}}</a></li>
+					        <li class="nav-item"><a class="nav-link" href="#dashboard_cmds" data-toggle="tab">{{__('Orders')}}</a></li>
+							<li class="nav-item"><a class="nav-link" href="#dashboard_bills" data-toggle="tab">{{__('Medical Billings')}}</a></li>
+					     	<li class="nav-item"><a class="nav-link" href="#dashboard_inventory_bills" data-toggle="tab">{{__('Inventory Billings')}}</a></li>
+						    <li class="nav-item"><a class="nav-link" href="#dashboard_med_prescs" data-toggle="tab">{{__('Medicines')}}</a></li>
+						 </ul>
+						 </div>
+						 </div>
+					
+						<div class="card-body p-0">
+						   <div class="tab-content" style="font-size:0.9em;">
+							  <div class="tab-pane active" id="dashboard_events">
+							   @include('external_patient.dashboard.list.rdv_list')
+							  </div>
+							  <div class="tab-pane" id="dashboard_visits">
+							    @include('external_patient.dashboard.list.visit_list')
+							  </div>
+							  <div class="tab-pane" id="dashboard_hist">
+							    @include('external_patient.dashboard.list.hist_list')
+							  </div>
+							  <div class="tab-pane" id="dashboard_treatment_plans">
+							    @include('external_patient.dashboard.list.treatment_plans_list')
+							  </div>
+							  <div class="tab-pane" id="dashboard_medical_documents">
+							   @include('external_patient.dashboard.list.medical_documents_list')
+							  </div>
+							  <div class="tab-pane" id="dashboard_rx">
+							   @include('external_patient.dashboard.list.rx_list')
+							  </div>
+							  <div class="tab-pane" id="dashboard_cmds">
+							   @include('external_patient.dashboard.list.cmds_list')
+							  </div>
+							  <div class="tab-pane" id="dashboard_bills">
+							   @include('external_patient.dashboard.list.bill_list')
+							  </div>
+							  <div class="tab-pane" id="dashboard_inventory_bills">
+							   @include('external_patient.dashboard.list.inventory_bill_list')
+							  </div>
+							  <div class="tab-pane" id="dashboard_med_prescs">
+							   @include('external_patient.dashboard.list.prescs_list')
+							  </div>
+							 
+						   </div>		  
+						</div>
+			   </div>
+		 </div>
+		  
+        </div>
+        <!-- /.row -->
+       
+</div><!-- /.container-fluid -->
+@include('external_patient.dashboard.personalInfoModal')	
+@endsection
+@section('scripts')
+<script>
+$(document).ready(function(){
+	$('body').addClass('sidebar-collapse');
+	$('body').find('.main-footer').show();
+	 $('a[data-toggle="tab"]').on('shown.bs.tab', function (e) {
+        $.fn.dataTable.tables({ visible: true, api: true }).columns.adjust();
+    });
+	$('#dash_bills_table').DataTable({
+           paging: true,
+		   lengthMenu: [[10, 25, 50,100, -1], [10, 25, 50,100, "{{__('All')}}"]], 
+           searching: true,
+           ordering: true,		   
+		   order: [['2','desc']],
+           scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('All')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				},
+				 footerCallback: function (row, data, start, end, display) {
+						let api = this.api();
+				 
+						// Remove the formatting to get integer data for summation
+						let intVal = function (i) {
+							return typeof i === 'string'
+								? i.replace(/[\$,]/g, '') * 1
+								: typeof i === 'number'
+								? i
+								: 0;
+						};
+				 
+						api.column(0).footer().innerHTML ='Total :';
+						// Total over this page
+						pageTotal = api
+							.column(3)
+							.data()
+							.reduce((a, b) => intVal(a) + intVal(b), 0);
+				 
+						// Update footer
+						api.column(3).footer().innerHTML =
+							'$' +  parseFloat(pageTotal).toFixed(2);
+						// Total over this page
+						pageTotal = api
+							.column(4)
+							.data()
+							.reduce((a, b) => intVal(a) + intVal(b), 0);
+				 
+						// Update footer
+						api.column(4).footer().innerHTML =
+							'$' + parseFloat(pageTotal).toFixed(2);
+                       
+					   // Total over this page
+						pageTotal = api
+							.column(5)
+							.data()
+							.reduce((a, b) => intVal(a) + intVal(b), 0);
+				 
+						// Update footer
+						api.column(5).footer().innerHTML =
+							'$' +  parseFloat(pageTotal).toFixed(2);							
+					}
+				});	
+	$('#dash_hist_table').DataTable({
+           
+		   retrieve: true,
+		   paging: true,
+           searching: true,
+           ordering: true,
+		   order: [['4','desc'],['3','desc']],
+		    scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('Show all')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				}
+				});	
+	
+	
+	$('#dash_presc_table').DataTable({
+           
+		   retrieve: true,
+		   paging: true,
+           searching: true,
+           ordering: true,
+		   order: [['1','desc'],['2','desc']],
+		   scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('Show all')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				}
+				});	
+				
+	$('#dash_rdv_table').DataTable({
+           paging: true,
+           searching: true,
+           ordering: true,
+		   order: [['3','desc']],
+		    scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('Show all')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				}
+				});	
+				
+	$('#dash_plan_table').DataTable({
+           
+		   retrieve: true,
+		   paging: true,
+           searching: true,
+           ordering: true,
+		   order: [['4','desc'],['3','desc']],
+		    scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('Show all')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				}
+				});	
+				
+	$('#dash_visit_table').DataTable({
+           
+		   retrieve: true,
+		   paging: true,
+           searching: true,
+           ordering: true,
+		   order: [['3','desc'],['4','desc']],
+		   scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('Show all')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				}
+				});	
+	
+	$('#dash_inv_bills_table').DataTable({
+           
+		   paging: true,
+		   lengthMenu: [[10, 25, 50,100, -1], [10, 25, 50,100, "{{__('All')}}"]], 
+		   searching: true,
+           ordering: true,		   
+		   order: [['3','desc'],['2','desc']],
+           scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('All')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				},
+				 footerCallback: function (row, data, start, end, display) {
+						let api = this.api();
+				 
+						// Remove the formatting to get integer data for summation
+						let intVal = function (i) {
+							return typeof i === 'string'
+								? i.replace(/[\$,]/g, '') * 1
+								: typeof i === 'number'
+								? i
+								: 0;
+						};
+				 
+						api.column(0).footer().innerHTML ='Total :';
+						// Total over this page
+						pageTotal = api
+							.column(3)
+							.data()
+							.reduce((a, b) => intVal(a) + intVal(b), 0);
+				 
+						// Update footer
+						api.column(3).footer().innerHTML =
+							'$' +  parseFloat(pageTotal).toFixed(2);
+						// Total over this page
+						pageTotal = api
+							.column(4)
+							.data()
+							.reduce((a, b) => intVal(a) + intVal(b), 0);
+				 
+						// Update footer
+						api.column(4).footer().innerHTML =
+							'$' + parseFloat(pageTotal).toFixed(2);
+                       
+					   // Total over this page
+						pageTotal = api
+							.column(5)
+							.data()
+							.reduce((a, b) => intVal(a) + intVal(b), 0);
+				 
+						// Update footer
+						api.column(5).footer().innerHTML =
+							'$' +  parseFloat(pageTotal).toFixed(2);							
+					}
+				});	
+				
+	$('#dash_rx_table').DataTable({
+           retrieve: true,
+		   paging: true,
+           searching: true,
+           ordering: true,
+		   order: [['4','desc'],['1','desc']],
+		    scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('Show all')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				}
+				});	
+	
+	
+    $('#dash_docs_table').DataTable({
+           
+		   retrieve: true,
+		   paging: true,
+           searching: true,
+           ordering: true,
+		   order: [['4','desc'],['3','desc']],
+		    scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('Show all')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				}
+				});		
+    
+	$('#dash_cmd_table').DataTable({
+           
+		   retrieve: true,
+		   paging: true,
+           searching: true,
+           ordering: true,
+		   order: [['2','desc']],
+		    scrollY:350,
+		   scrollX:true,
+		   scrollCollapse: true,
+           info: true,
+		   language: {
+			    search:         "{{__('Search')}}&nbsp;:",
+				lengthMenu:    "{{__('Show')}} _MENU_ {{__('entries')}}",
+				info:          "{{__('Showing')}} _START_ {{__('to')}} _END_ {{__('of')}} _TOTAL_ {{__('entries')}}",
+				infoEmpty: "{{__('Showing')}}  0 {{__('to')}} 0 {{__('of')}} 0 entrées",
+				emptyTable:  "{{__('No data is found')}}",
+				zeroRecords: "{{__('No data is found')}}",
+				buttons: {
+                                   "colvis": "{{__('Column visibility')}}",
+                                   "copy": "{{__('Copy')}}",
+								   "print": "{{__('Print')}}",
+								   "pageLength": {
+                                                   _: "{{__('Show')}} %d {{__('entries')}}",
+												   '-1': "__('Show all')}}"
+                                                 }
+						
+								},
+				paginate: {
+								first:      "{{__('First')}}",
+								previous:   "{{__('Previous')}}",
+								next:       "{{__('Next')}}",
+								last:       "{{__('Last')}}"
+							}
+				}
+				});	
+	
+});
+</script>
+<script>
+
+	function PopupCenter(url, title, w, h) {  
+        // Fixes dual-screen position                         Most browsers      Firefox  
+        var dualScreenLeft = window.screenLeft != undefined ? window.screenLeft : screen.left;  
+        var dualScreenTop = window.screenTop != undefined ? window.screenTop : screen.top;  
+                  
+        width = window.innerWidth ? window.innerWidth : document.documentElement.clientWidth ? document.documentElement.clientWidth : screen.width;  
+        height = window.innerHeight ? window.innerHeight : document.documentElement.clientHeight ? document.documentElement.clientHeight : screen.height;  
+                  
+        var left = ((width / 2) - (w / 2)) + dualScreenLeft;  
+        var top = ((height / 2) - (h / 2)) + dualScreenTop;  
+        var newWindow = window.open(url, title, 'scrollbars=yes, width=' + w + ', height=' + h + ', top=' + top + ', left=' + left);  
+      
+        // Puts focus on the newWindow  
+        if (window.focus) {  
+            newWindow.focus();  
+        }  
+    }  
+</script>
+@endsection
+ 
+

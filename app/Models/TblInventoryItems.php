@@ -1,0 +1,83 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class TblInventoryItems extends Model
+{
+    use HasFactory;
+	protected $table = 'tbl_inventory_items';
+	protected $fillable = [
+       'sku',
+	   'num_invoice',
+	   'items_specs',
+	   'brand',
+	   'line',
+	   'fournisseur',
+	   'description',
+	   'gen_types',	
+	   'cost_price',
+	   'sel_price',
+	   'initprice',
+	   'formula_id',	
+	   'qty',
+	   'barcode',
+	   'notes',
+	   'date_reception',
+	   'num_facture',
+	   'category',
+	   'taxable',
+	   'min',
+	   'max',
+	   'garanty',
+	   'user_id',
+	   'clinic_num',
+		'materiel',
+		'typecode',
+		'upc',
+		'nbtest',
+		'frac',
+		'currency',
+	   'active',
+	   'gqty',
+	   'offre',
+	   'discount',
+	   'location_id',
+	   'main_id',
+	   'sub_id',
+	   'detailsasset',
+	   'manufacturer',
+	   'modele',
+	   'serial',
+	   'madeof',
+	   'dcolor',
+	   'invdate',
+	   'capdate',
+	   'specdetails',
+	   'pricelbp',
+	   'priceusd',
+	   'deplbp',
+	   'rate',
+	   'grosslbp',
+	   'netlbp',
+	   'acclbp',
+	   'lastdatedep',
+	   'descriptionacct',
+	   'accumlateacct',
+	   'descriptiontype',
+	   'status',
+	   'remark',
+	   'insurance',
+	   'lastmaintenance',
+	   'inexpdate',
+	   'softlicence',
+	   'username',
+	   'mainacct',
+	   'deprate',
+	   'assetlifey',
+	   'assetlifea',
+	   'locationd'
+    ];    
+}

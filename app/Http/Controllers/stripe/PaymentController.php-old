@@ -1,0 +1,177 @@
+<?php
+
+namespace App\Http\Controllers\stripe;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log; // Import Log facade
+use Exception;
+use Session;
+use Stripe;
+use Crypt;
+use DB;
+
+class PaymentController extends Controller
+
+{
+	
+	
+	public function stripe($lang,$id)
+    {
+        //this is the encrypted event id for patient
+		$event_id = Crypt::decrypt($id);
+		//dd($event_id);
+		$data_event = DB::table('tbl_calendar_events')->where('active','O')->where('id',$event_id)->first();
+ 	    $data_exam = DB::table('tbl_bill_amounts')->where('status','O')->where('id',$data_event->bill_exam_num)->first();
+		if($lang=='fr'){
+		$CodeExam=$data_exam->am_code.'-'.$data_exam->name_fr;
+		}else{
+		$CodeExam=$data_exam->am_code.'-'.$data_exam->name_eng;	
+		}
+		
+		$PriceExam=$data_exam->sell_amount;
+    		return view('stripe.payment')->with("event_id",$event_id)->with("CodeExam",$CodeExam)->with("PriceExam",$PriceExam);
+    }
+
+    public function stripePost($lang,Request $request)
+    {
+		
+	$validator = Validator::make($request->all(), [
+        'fullName' => 'required',
+		
+		],[
+		'fullName.required'=>__('Please fill your full name as shown on your card')
+		]);
+
+   
+     $event_id = $request->input('event_id');
+	 $data_event = DB::table('tbl_calendar_events')->where('active','O')->where('id',$event_id)->first();
+ 	 $data_exam = DB::table('tbl_bill_amounts')->where('status','O')->where('id',$data_event->bill_exam_num)->first();
+     $user_num = auth()->user()->id;
+  	 $data_patient = DB::table('tbl_patients')->where('status','O')->where('id',$data_event->patient_num)->first();
+	 
+	 
+	 Stripe\Stripe::setApiKey(env('STRIPE_SECRET'));
+     
+	 Stripe\Charge::create ([
+                "amount" =>$data_exam->sell_amount*100,
+                "currency" => "CAD",
+                "source" => $request->stripeToken,
+                "description" => 'Patient Name:'.$data_patient->first_name.' '.$data_patient->last_name,
+        ]);
+	  
+		DB::table('tbl_stripe_payment')->insert([
+		   'event_id'=>$event_id,
+		   'user_num'=>$user_num,
+		   'clinic_num'=>$data_event->clinic_num,
+		   'patient_num'=>$data_event->patient_num,
+		   'doctor_num'=>$data_event->doctor_num,
+		   'exam_num'=>$data_event->bill_exam_num,
+		   'price'=>$data_exam->sell_amount,
+		   'active'=>'O'
+		  ]);
+        
+		
+        Session::flash('success', __('Payment Successfull'));
+		
+        //return redirect()->route('patient_dash.index',$lang);
+	    return back();
+    }
+	
+	/*public function stripePost($lang,Request $request)
+    {
+        //dd($request);
+		$validator = Validator::make($request->all(), [
+            'fullName' => 'required',
+            'cardNumber' => 'required',
+            'month' => 'required',
+            'year' => 'required',
+            'cvv' => 'required'
+        ],[
+		'fullName.required'=>__('Please fill your full name as shown on your card'),
+		'cardNumber.required'=>__('Please fill your card number'),
+		'month.required'=>__('Please fill your expiry month'),
+		'year.required'=>__('Please fill your expiry year'),
+		'cardNumber.required'=>__('Please fill your cvv')
+		
+		]);
+
+        if ($validator->fails()) {
+            $request->session()->flash('danger', $validator->errors()->first());
+            return back(); 
+        }
+
+        $token = $this->createToken($request);
+        if (!empty($token['error'])) {
+            $request->session()->flash('danger', $token['error']);
+            return back(); 
+        }
+        if (empty($token['id'])) {
+            $request->session()->flash('danger', 'Payment failed.');
+            return back();
+        }
+
+        $event_id = $request->input('event_id');
+	    $data_event = DB::table('tbl_calendar_events')->where('active','O')->where('id',$event_id)->first();
+ 	    $data_exam = DB::table('tbl_bill_amounts')->where('status','O')->where('id',$data_event->bill_exam_num)->first();
+        $user_num = auth()->user()->id;
+  	    $data_patient = DB::table('tbl_patients')->where('status','O')->where('id',$data_event->patient_num)->first();
+		
+		$charge = $this->createCharge($token['id'], $data_exam->sell_amount*100,$data_patient);
+        
+		if (!empty($charge) && $charge['status'] == 'succeeded') {
+            DB::table('tbl_stripe_payment')->insert([
+			   'event_id'=>$event_id,
+			   'user_num'=>$user_num,
+			   'clinic_num'=>$data_event->clinic_num,
+			   'patient_num'=>$data_event->patient_num,
+			   'doctor_num'=>$data_event->doctor_num,
+			   'exam_num'=>$data_event->bill_exam_num,
+			   'price'=>$data_exam->sell_amount,
+			   'active'=>'O'
+			  ]);
+			$request->session()->flash('success', 'Payment completed.');
+        } else {
+            $request->session()->flash('danger', 'Payment failed.');
+        }
+        return back(); 
+    }
+
+    private function createToken($cardData)
+    {
+        $token = null;
+        try {
+            $token =  $this->stripe->tokens->create([
+                'card' => [
+                    'number' => $cardData['cardNumber'],
+                    'exp_month' => $cardData['month'],
+                    'exp_year' => $cardData['year'],
+                    'cvc' => $cardData['cvv']
+                ]
+            ]);
+        } catch (CardException $e) {
+            $token['error'] = $e->getError()->message;
+        } catch (Exception $e) {
+            $token['error'] = $e->getMessage();
+        }
+        return $token;
+    }
+
+    private function createCharge($tokenId, $amount, $data_patient)
+    {
+        $charge = null;
+        try {
+            $charge =  $this->stripe->charges->create([
+                'amount' => $amount,
+                'currency' => 'cad',
+                'source' => $tokenId,
+                'description' => 'Patient Name:'.$data_patient->first_name.' '.$data_patient->last_name
+            ]);
+        } catch (Exception $e) {
+            $charge['error'] = $e->getMessage();
+        }
+        return $charge;
+    }*/
+	
+}

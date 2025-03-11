@@ -1,0 +1,619 @@
+<?php
+namespace App\Helpers; // Your helpers namespace 
+use App\Models\User;
+use App\Models\Patient;
+use App\Models\Permission;
+use App\Models\TblInventoryInvoicesDetails;
+use App\Models\Doctor;
+use RingCentral\SDK\SDK;
+use DB;
+use Session;
+use Carbon\Carbon;
+
+class UserHelper
+{
+    
+ 
+//function to escapt html chars in sms and email templates
+	public static function escape_newline($str)
+	{
+		
+		$str = str_replace("\r\n", "*BR*", $str);
+		return htmlspecialchars($str, ENT_QUOTES, "UTF-8");
+	}
+
+
+//get accessability of each user to access menu
+	public static function can_access($user,$menu){
+	   
+	   $user_type = $user->type;
+	   switch($user_type){
+		   //pro account
+		   case 1 :
+			//admin access all menus
+			if($user->admin_perm=='O'){ return true; }
+			
+			if($user->admin_perm !='O'){
+				$perms = Permission::where('uid',$user->id)->where('active','O')->first();
+				$user_profile = isset($perms->profile_permissions)?explode(",",$perms->profile_permissions):[];
+				if(in_array($menu,$user_profile)){
+					return true;
+				}else{
+					return false;
+				}
+			}
+			break;
+			//clinic account
+			case 2:
+			//admin access all menus
+			if($user->admin_perm=='O'){ return true; }
+			
+			$perms = Permission::where('uid',$user->id)->where('clinic_num',$user->clinic_num)
+									   ->where('active','O')->first();
+			$user_profile= isset($perms->profile_permissions)?explode(",",$perms->profile_permissions):[];					   
+			if(in_array($menu,$user_profile)){
+					return true;
+				}else{
+					return false;
+				}
+				
+			break;
+		   
+	   }
+	   
+		
+	}
+	
+	
+public static function drop_session_keys($arr){
+		foreach($arr as $key=>$value){
+			Session::forget($key);
+		}
+	}
+	
+public static function generate_session_keys($arr){
+		foreach($arr as $key=>$value){
+			Session::put($key,$value);
+		}
+	}
+
+
+public static function rp_txt($str){
+   	 
+	 if (str_contains($str, "custom")) {
+         $str = str_replace("custom","index.php/futgpr",$str);
+       }else{
+		 $str = "/pubic/index.php/futgpr".$str;  
+	   }
+
+	 
+	 if (!str_contains($str, config('app.url'))) {
+         $str = config('app.url').$str;
+       }
+	 
+	 
+     return $str;
+	
+	}
+	
+public static function add_url($str){
+	if (!str_contains($str, config('app.url'))) {
+         $str = config('app.url').$str;
+       }
+	 return $str;  
+}	
+
+public static function get_article($id){
+	$item = DB::table('tbl_inventory_items as i')->select('i.id','i.description as name','f.name as namefournisseur')
+	        ->join('tbl_inventory_items_fournisseur as f','f.id','i.fournisseur')
+			->where('f.active','O')
+			->where('i.id',$id)
+			->first();
+	$name = isset($item) ? $item->name.'-'.'('.__('Supplier').':'.$item->namefournisseur.')' : __("Undefined");
+    return $name;	
+}
+
+public static function get_cmd_details($id){
+	$data= TblInventoryInvoicesDetails::where('cmd_id',$id)->where('status','O')->get();
+	return $data;
+}
+
+public static function get_cmd_spec($id){
+	$data=TblInventoryInvoicesDetails::where('cmd_id',$id)->where('status','O')->where('cmd_type','lunette')->first();
+	return $data;
+}
+
+public static function get_doctor_info($id){
+	$data= Doctor::find($id);
+	return $data;
+}
+
+public static function get_cmd_rx($data){
+	$result = (isset($data))?json_decode($data,true):array();
+	return $result;
+}
+
+public static function get_presc_details($id){
+	       
+			$days = __('Days');
+			$weeks = __('Weeks');
+			$months = __('Months');
+			$year = __('Year');
+   		    $presc_details=DB::table('tbl_medical_prescriptions_details as det')
+			                ->select('det.*',
+							         'm.title_en as medicine_en','m.title_fr as medicine_fr',
+									 's.section_en','s.section_fr',
+							         DB::raw("CONCAT(v.section_en,'-',v.abbrev) as voie_en"),DB::raw("CONCAT(v.section_fr,'-',v.abbrev) as voie_fr"),
+									 'dt.section_en as dt_en','dt.section_fr as dt_fr',
+									 'dp.section_en as dp_en','dp.section_en as dp_fr',
+									 DB::raw("CONCAT(freq.section_en,'-',freq.abbrev) as freq_en"),DB::raw("CONCAT(freq.section_fr,'-',freq.abbrev) as freq_fr")
+									 
+									 )
+							->join('tbl_medications as m','m.id','det.medicine_num')
+							->join('tbl_medical_sections as s','s.id','det.section_num')
+							->join('tbl_medical_voie as v','v.id','det.voie_num')
+							->join('tbl_medical_dosagetypes as dt','dt.id','det.dosage_type')
+							->join('tbl_medical_dosageperiods as dp','dp.id','det.dosage_period')
+							->join('tbl_medical_frequencies as freq','freq.id','det.freq')
+							->where('det.presc_id',$id)->where('det.active','O')
+							->orderBy('det.expiry_date','desc')->get();   
+return $presc_details;		 
+}
+
+
+public static function getRingCentralFaxState($id){
+	 require base_path("vendor/autoload.php");
+    $rcsdk = new SDK($client_id, $secrect_code, $server);
+    $platform = $rcsdk->platform();
+	$platform->login($user_name, $ext, $pass);
+	
+      $endpoint = "/restapi/v1.0/account/~/extension/~/message-store/".$id;
+      $resp = $platform->get($endpoint);
+      $jsonObj = $resp->json();
+      if ($jsonObj->messageStatus == "Queued"){
+        sleep(10);
+        getRingCentralFaxState($jsonObj->id);
+      }
+	  
+	  return $jsonObj->messageStatus;
+	  
+    
+}
+
+
+public static function getTPDOCS($id){
+	$tp_docs = DB::table('tbl_patient_visit_treatment_plan_docs')->where('tp_id',$id)->where('status','O')->get();
+	return $tp_docs;
+}
+
+//History Form Section
+public static function getEyePart($id,$name){
+  $eye_part = DB::table('tbl_patient_ocular_part')->where('id',$id)->value($name); 
+ return $eye_part;	
+}
+public static function getEyeComplaint($id,$clinic_num,$name){
+ $eye_complaint = DB::table('tbl_patient_ocular_complaints')->where('clinic_num',$clinic_num)->where('id',$id)->value($name); 
+ return $eye_complaint;	
+}
+public static function getEyePain($id,$clinic_num,$name){
+ $eye_pain = DB::table('tbl_patient_ocular_pain')->where('clinic_num',$clinic_num)->where('id',$id)->value($name);
+ return $eye_pain;	
+}
+public static function getEyeSigns($id,$clinic_num,$name){
+ $eye_signs = DB::table('tbl_patient_ocular_sign')
+			                  ->whereRaw("json_search('{$id}','one',id)")
+							  ->where('clinic_num',$clinic_num)
+							  ->pluck($name)->toArray();
+ return $eye_signs;	
+}
+public static function getEyeConditions($eye,$clinic_num,$name){
+ $eye_conditions = DB::table('tbl_patient_ocular_conds')
+			                  ->whereRaw("json_search('{$eye}','one',id)")
+							  ->where('clinic_num',$clinic_num)
+							  ->pluck($name)->toArray();
+ return $eye_conditions;	
+}
+
+public static function getMedConds($conds,$clinic_num,$name){
+ $med_conds = DB::table('tbl_patient_med_conds')
+			                  ->whereRaw("json_search('{$conds}','one',id)")
+							  ->where('clinic_num',$clinic_num)							 
+							 ->pluck($name)->toArray();
+ return $med_conds;	
+}
+public static function getMedAllergies($allergies,$clinic_num,$name){
+ $med_allergies = DB::table('tbl_patient_allergies_list')
+			                  ->whereRaw("json_search('{$allergies}','one',id)")
+	                          ->where('clinic_num',$clinic_num)
+							  ->pluck($name)->toArray();
+ return $med_allergies;	
+}
+public static function getDiabType($type,$clinic_num,$name){
+ $diab_type = DB::table('tbl_patient_diab_types')
+					  ->where('id',$type)
+					  ->where('clinic_num',$clinic_num)
+					  ->value($name);
+ return $diab_type;	
+}
+public static function getDiabControl($control,$clinic_num,$name){
+ $diab_control = DB::table('tbl_patient_diab_control')
+						->where('id',$control)
+						->where('clinic_num',$clinic_num)
+						->value($name);
+ return $diab_control;	
+}
+
+/*public static function getHistSections($infos){
+if(isset($infos)){
+	$section_ids =array();
+    $arr = json_decode($infos,true);
+    foreach($arr as $v){
+	 if(!in_array($v['section_num'],$section_ids)){
+	  array_push($section_ids,$v['section_num']);	
+	 }
+	}
+    $sections = DB::table('tbl_non_ocular_history_sections')->whereIn('id',$section_ids)->orderBy('s_order')->get();	
+}else{
+	$sections =collect();
+}
+
+return $sections;
+}*/	
+
+//Get treatment id
+public static function get_treatment_id(){
+	$id =0;
+	$last_exam = DB::table('tbl_bill_amounts')->orderBy('id','desc')->first();
+	if(isset($last_exam)){
+		$id=$last_exam->id;
+	}
+	return $id;
+}	
+																		
+//End History Form sections												
+public static function get_zoom_links(){
+	$links = DB::table('zoom_links')->orderBy('id','desc')->get();
+	return $links;
+}
+
+public static function dashboard_pat_name($id){
+	$patient = Patient::find($id);
+	return $patient->first_name.' '.$patient->last_name;
+}
+
+public static function getMainBranchName(){
+	$b = DB::table('tbl_clinics')->where('active','O')->where('main_branch','Y')->first();
+	return isset($b) && isset($b->full_name)?$b->full_name:'Branch Name';
+}
+
+public static function createEquipXML($visit_num,$clinic_num,$patient_num,$equip_name,$equip_type,$path){
+    $patient=Patient::find($patient_num);
+    $visit = DB::table('tbl_visits')->find($visit_num);
+	$result = NULL;
+	switch($equip_type){
+	case 'AR':
+	$result = DB::table('tbl_auto_refractor')->where('clinic_num',$clinic_num)
+	          ->where('patient_num',$patient_num)
+			  ->where('visit_num',$visit_num)
+			  ->where('active','O')->first();
+     break;
+	 case 'LM':
+	 $result = DB::table('tbl_lensometer')->where('clinic_num',$clinic_num)
+	          ->where('patient_num',$patient_num)
+			  ->where('visit_num',$visit_num)
+			  ->where('active','O')->first();
+	 break;
+	}
+   
+   if(!isset($result)){
+	   return 2;
+   }
+      
+  switch($equip_name.'-'.$equip_type){
+    case 'NIDEKRT-6100-AR':
+	   $xml_path=$path.'/'.'output';
+     if (!file_exists($xml_path)) {
+       mkdir($xml_path, 0775, true);
+     }			  
+   $file_path = $xml_path.'/'.'RT_AR.xml';
+   if (!file_exists($file_path)){
+      $nfile = fopen($file_path,'w');
+      fclose($nfile);
+      }
+      $xw = new \XMLWriter();
+      $xw->openUri($xml_path.'/'.'RT_AR.xml');
+      $xw->startDocument('1.0', 'UTF-8');
+	  // Enable the indents 
+      $xw->setIndent(true); 
+     // Set the indent string 
+     $xw->setIndentString(' '); 
+   // A first element
+   $xw->startElement('Ophthalmology');
+	  //Open A child element
+	  $xw->startElement('Common');
+	  //<company></company>
+	  $xw->startElement('Company');
+	  $xw->text("NIDEK");
+	  $xw->endElement();
+	  //<ModelName></ModelName>
+	  $xw->startElement('ModelName');
+	  $xw->text("RT-6100");
+	  $xw->endElement();
+	  //<MachineNo></MachineNo>
+	  $xw->startElement('MachineNo');
+	  $xw->text("000013");
+	  $xw->endElement();
+	 //<ROMVersion></ROMVersion>
+	  $xw->startElement('ROMVersion');
+	  $xw->text("1.0.4");
+	  $xw->endElement();
+    //<Version></Version>
+	  $xw->startElement('Version');
+	  $xw->text("RT015_HST_V1.00");
+	  $xw->endElement();
+    //<Date></Date>
+	  $xw->startElement('Date');
+	  $xw->text(Carbon::parse($visit->visit_date_time)->format('Y-m-d'));
+	  $xw->endElement();
+   //<Time></Time>
+	  $xw->startElement('Time');
+	  $xw->text(Carbon::parse($visit->visit_date_time)->format('H:i'));
+	  $xw->endElement();
+    //<Patient></Patient>
+	  $xw->startElement('Patient');
+	        $xw->startElement('No');
+	        $xw->endElement();
+		    $xw->startElement('ID');
+	        $xw->text($patient->id);
+	        $xw->endElement();
+			$xw->startElement('FirstName');
+	        $xw->text($patient->first_name);
+	        $xw->endElement();
+			$xw->startElement('MiddleName');
+	        $xw->endElement();
+			$xw->startElement('LastName');
+	        $xw->text($patient->last_name);
+	        $xw->endElement();
+			$xw->startElement('Sex');
+	        $xw->text(($patient->sex=='F'?'Female':($patient->sex=='M'?'Male':'')));
+	        $xw->endElement();
+			$xw->startElement('Age');
+	        $xw->text(Carbon::parse($patient->birthdate)->age);
+	        $xw->endElement();
+			$xw->startElement('DOB');
+	        $xw->text(Carbon::parse($patient->birthdate)->format('Y-m-d'));
+	        $xw->endElement();
+			$xw->startElement('NameJ1');
+	        $xw->endElement();
+			$xw->startElement('NameJ2');
+	        $xw->endElement();
+	  $xw->endElement();  	  
+  $xw->endElement();//</Common>
+  //Open Another child element
+	  $xw->startElement('Measure');
+	    $xw->writeAttribute('Type','RT');
+       
+	  $xw->startElement('Phoropter');
+	  $xw->startElement('Corrected');
+	    $xw->writeAttribute('CorrectionType','REF_Base');
+        $xw->writeAttribute('Vision','Distant');
+        $xw->writeAttribute('Situation','Standard');
+       
+	     $xw->startElement('R');
+				$xw->startElement('Sphere');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->right_sphere:'');
+				$xw->endElement();
+				$xw->startElement('Cylinder');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->right_cylinder:'');
+				$xw->endElement();
+				$xw->startElement('Axis');
+				  $xw->writeAttribute('unit','deg');
+				  $xw->text(isset($result)?$result->right_axis:'');
+				$xw->endElement();
+		   $xw->endElement();
+		   $xw->startElement('L');
+				$xw->startElement('Sphere');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->left_sphere:'');
+				$xw->endElement();
+				$xw->startElement('Cylinder');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->left_cylinder:'');
+				$xw->endElement();
+				$xw->startElement('Axis');
+				  $xw->writeAttribute('unit','deg');
+				  $xw->text(isset($result)?$result->left_axis:'');
+				$xw->endElement();
+		   $xw->endElement();
+	  $xw->endElement();//</Corrected>
+	  $xw->endElement();//</Phoropter>
+	  $xw->endElement();//</Measure> 
+  $xw->endElement();//</Ophtamology>
+   return 1;
+  break;
+  case 'NIDEKRT-6100-LM':
+	   $xml_path=$path.'/'.'output';
+		 if (!file_exists($xml_path)) {
+		   mkdir($xml_path, 0775, true);
+		 }			  
+      $file_path = $xml_path.'/'.'RT_LM.xml';
+	   if (!file_exists($file_path)){
+		  $nfile = fopen($file_path,'w');
+		  fclose($nfile);
+		  }
+      $xw = new \XMLWriter();
+      $xw->openUri($xml_path.'/'.'RT_LM.xml');
+      $xw->startDocument('1.0', 'UTF-8');
+	  // Enable the indents 
+      $xw->setIndent(true); 
+     // Set the indent string 
+     $xw->setIndentString(' '); 
+     // A first element
+     $xw->startElement('Ophthalmology');
+	  //Open A child element
+	  $xw->startElement('Common');
+	  //<company></company>
+	  $xw->startElement('Company');
+	  $xw->text("NIDEK");
+	  $xw->endElement();
+	  //<ModelName></ModelName>
+	  $xw->startElement('ModelName');
+	  $xw->text("RT-6100");
+	  $xw->endElement();
+	  //<MachineNo></MachineNo>
+	  $xw->startElement('MachineNo');
+	  $xw->text("000013");
+	  $xw->endElement();
+	 //<ROMVersion></ROMVersion>
+	  $xw->startElement('ROMVersion');
+	  $xw->text("1.0.4");
+	  $xw->endElement();
+    //<Version></Version>
+	  $xw->startElement('Version');
+	  $xw->text("RT015_HST_V1.00");
+	  $xw->endElement();
+    //<Date></Date>
+	  $xw->startElement('Date');
+	  $xw->text(Carbon::parse($visit->visit_date_time)->format('Y-m-d'));
+	  $xw->endElement();
+   //<Time></Time>
+	  $xw->startElement('Time');
+	  $xw->text(Carbon::parse($visit->visit_date_time)->format('H:i'));
+	  $xw->endElement();
+    //<Patient></Patient>
+	  $xw->startElement('Patient');
+	        $xw->startElement('No');
+	        $xw->endElement();
+		    $xw->startElement('ID');
+	        $xw->text($patient->id);
+	        $xw->endElement();
+			$xw->startElement('FirstName');
+	        $xw->text($patient->first_name);
+	        $xw->endElement();
+			$xw->startElement('MiddleName');
+	        $xw->endElement();
+			$xw->startElement('LastName');
+	        $xw->text($patient->last_name);
+	        $xw->endElement();
+			$xw->startElement('Sex');
+	        $xw->text(($patient->sex=='F'?'Female':($patient->sex=='M'?'Male':'')));
+	        $xw->endElement();
+			$xw->startElement('Age');
+	        $xw->text(Carbon::parse($patient->birthdate)->age);
+	        $xw->endElement();
+			$xw->startElement('DOB');
+	        $xw->text(Carbon::parse($patient->birthdate)->format('Y-m-d'));
+	        $xw->endElement();
+			$xw->startElement('NameJ1');
+	        $xw->endElement();
+			$xw->startElement('NameJ2');
+	        $xw->endElement();
+	  $xw->endElement();  	  
+  $xw->endElement();//</Common>
+  //Open Another child element
+	  $xw->startElement('Measure');
+	    $xw->writeAttribute('Type','RT');
+       
+	  $xw->startElement('Phoropter');
+	  $xw->startElement('Corrected');
+	    $xw->writeAttribute('CorrectionType','REF_Base');
+        $xw->writeAttribute('Vision','Distant');
+        $xw->writeAttribute('Situation','Standard');
+       
+	     $xw->startElement('R');
+				$xw->startElement('Sphere');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->right_sphere:'');
+				$xw->endElement();
+				$xw->startElement('Cylinder');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->right_cylinder:'');
+				$xw->endElement();
+				$xw->startElement('Axis');
+				  $xw->writeAttribute('unit','deg');
+				  $xw->text(isset($result)?$result->right_axis:'');
+				$xw->endElement();
+				$xw->startElement('ADD');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->right_add1:'');
+				$xw->endElement();
+				$xw->startElement('Prism');
+				  $xw->writeAttribute('unit','pri');
+				  $xw->text(isset($result)?$result->right_prism:'');
+				$xw->endElement();
+				$xw->startElement('PrismBase');
+				  $xw->writeAttribute('unit','deg');
+				  $xw->text(isset($result)?$result->right_prism_b:'');
+				$xw->endElement();
+				$xw->startElement('PrismX');
+				  $xw->writeAttribute('unit','pri');
+				  $xw->text(isset($result)?$result->right_prism_v:'');
+				$xw->endElement();
+				$xw->startElement('PrismY');
+				  $xw->writeAttribute('unit','pri');
+				  $xw->text(isset($result)?$result->right_prism_h:'');
+				$xw->endElement();
+				$xw->startElement('PD');
+				  $xw->writeAttribute('unit','mm');
+				  $xw->text(isset($result)?$result->right_far_pd:'');
+				$xw->endElement();
+				
+		   $xw->endElement();
+		   $xw->startElement('L');
+				$xw->startElement('Sphere');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->left_sphere:'');
+				$xw->endElement();
+				$xw->startElement('Cylinder');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->left_cylinder:'');
+				$xw->endElement();
+				$xw->startElement('Axis');
+				  $xw->writeAttribute('unit','deg');
+				  $xw->text(isset($result)?$result->left_axis:'');
+				$xw->endElement();
+				$xw->startElement('ADD');
+				  $xw->writeAttribute('unit','D');
+				  $xw->text(isset($result)?$result->left_add1:'');
+				$xw->endElement();
+				$xw->startElement('Prism');
+				  $xw->writeAttribute('unit','pri');
+				  $xw->text(isset($result)?$result->left_prism:'');
+				$xw->endElement();
+				$xw->startElement('PrismBase');
+				  $xw->writeAttribute('unit','deg');
+				  $xw->text(isset($result)?$result->left_prism_b:'');
+				$xw->endElement();
+				$xw->startElement('PrismX');
+				  $xw->writeAttribute('unit','pri');
+				  $xw->text(isset($result)?$result->left_prism_v:'');
+				$xw->endElement();
+				$xw->startElement('PrismY');
+				  $xw->writeAttribute('unit','pri');
+				  $xw->text(isset($result)?$result->left_prism_h:'');
+				$xw->endElement();
+				$xw->startElement('PD');
+				  $xw->writeAttribute('unit','mm');
+				  $xw->text(isset($result)?$result->left_far_pd:'');
+				$xw->endElement();
+		   $xw->endElement();
+		   $xw->startElement('B');
+				$xw->startElement('PD');
+				  $xw->writeAttribute('unit','mm');
+				  $xw->text(isset($result)?$result->binocular_distance:'');
+				$xw->endElement();
+		   $xw->endElement();
+	  $xw->endElement();//</Corrected>
+	  $xw->endElement();//</Phoropter>
+	  $xw->endElement();//</Measure> 
+  $xw->endElement();//</Ophtamology>
+   return 1;
+  break;
+  default:
+   return 0;
+  }
+}	
+	
+}

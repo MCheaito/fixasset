@@ -1,0 +1,219 @@
+@extends("gui.main_gui")
+@section("styles")
+ <style>
+  .bg-inf{
+	   background-color: #1bbc9b;
+   }
+ </style>
+@endsection
+@section("content")
+  
+   <div class="container-fluid">         
+    <main>
+    <div class="row">
+        <aside class="col-md-6 offset-md-3">
+            <article class="card">
+                <div class="card-body p-2">
+                    <ul class="nav bg-light nav-pills rounded nav-fill mb-3" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" data-toggle="pill" href="#nav-tab-card">
+                            <i class="fa fa-credit-card"></i>{{__('Stripe Payment')}}</a>
+                        </li>
+                    </ul>
+                    <div class="tab-content">
+                        <div class="tab-pane fade show active" id="nav-tab-card">
+                            @foreach (['danger', 'success'] as $status)
+                                @if(Session::has($status))
+                                    <p class="alert alert-{{$status}}">{{ Session::get($status) }}</p>
+                                @endif
+                            @endforeach
+                             <div class="m-1 row">
+					          <div>     
+                                  <label class='control-label'>{{__('Exam Name').' : '.$CodeExam}}</label> 
+                             </div>
+					       </div>
+					      <div class="m-1 row">
+					       <div>     
+                            <label id="lprice" class='control-label text-white badge bg-inf' style="font-size:1em;">{{__('Price').' : '.$PriceExam.' CAD '}}</label>
+						   </div>
+					     </div>
+					     <div class="m-1 row">
+					      <div id="Dprice" style="display:none;font-size:1em;">     
+                          <label  class='control-label'>{{__('Please call your clinic to adjust the exam price')}}</label>
+						  </div>
+					     </div>
+							<form role="form" method="POST" id="paymentForm" action="{{ route('stripe.payment.pay',app()->getLocale()) }}">
+                                @csrf
+                                <div class="row">
+                                  <div class="col-md-8">
+									<div class="form-group">
+										<label for="fullName">{{__('Full name (on the card)')}}</label>
+										<input type="text" class="form-control" name="fullName" placeholder="{{__('Full Name')}}" value="{{old('fullName')}}">
+									</div>
+								   </div>
+								   <div class="col-md-8">
+									<div class="form-group">
+										<label for="cardNumber">{{__('Card Number')}}</label>
+										<div class="input-group">
+											<input type="text" class="form-control card-number" name="cardNumber" placeholder="{{__('Card Number')}}" value="{{old('cardNumber')}}">
+											<div class="input-group-append">
+												<span class="input-group-text text-muted">
+												<i class="fab fa-cc-visa fa-lg pr-1"></i>
+												<i class="fab fa-cc-amex fa-lg pr-1"></i>
+												<i class="fab fa-cc-mastercard fa-lg"></i>
+												</span>
+											</div>
+										</div>
+									</div>
+								  </div>
+								</div>  
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="form-group">
+                                            <label><span class="hidden-xs">{{__('Expiration Month')}}</span> </label>
+                                            <div class="input-group">
+                                                <select class="form-control select2" name="month" style="width:100%;">
+                                                    <option value="">MM</option>
+                                                    @foreach(range(1, 12) as $month)
+                                                        <option value="{{$month}}">{{$month}}</option>
+                                                    @endforeach
+                                                </select>
+                                                
+                                            </div>
+                                        </div>
+                                    </div>
+									<div class="col-md-4">
+                                        <div class="form-group">
+                                            <label><span class="hidden-xs">{{__('Expiration Year')}}</span> </label>
+                                            <div class="input-group">
+                                                <select class="form-control select2" name="year" style="width:100%;">
+                                                    <option value="">YYYY</option>
+                                                    @foreach(range(date('Y'), date('Y') + 10) as $year)
+                                                        <option value="{{$year}}">{{$year}}</option>
+                                                    @endforeach
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-group">
+                                            <label data-toggle="tooltip" 
+                                                title="{{__('3 digits code on back side of the card')}}">CVV 
+												<i class="fa fa-question-circle"></i></label>
+                                            <input type="text" class="form-control card-cvc" placeholder="CVV" name="cvv" value="{{old('cvv')}}">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row justify-content-center">
+								<button class="subscribe btn btn-action" type="submit">{{__('Pay Now')}}</button>
+								</div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </article>
+        </aside>
+    </div>
+</main>
+</div>
+	
+ @endsection
+ @section('scripts') 
+<script type="text/javascript" src="https://js.stripe.com/v2/"></script>
+<script type="text/javascript">
+$(function() {
+  //$('.card-number').inputmask('################');
+  $('.select2').select2({theme:'bootstrap4',width:'resolve'});
+  var crd_nbr = [{ "mask": "####-####-####-####"}, { "mask": "####-####-####-####"}];
+  var cvc_nbr = [{ "mask": "###"}, { "mask": "###"}];
+  var month_nbr = [{ "mask": "##"}, { "mask": "##"}];
+  var year_nbr = [{ "mask": "####"}, { "mask": "####"}];
+  $('.card-number').inputmask({ 
+        mask: crd_nbr, 
+        greedy: false, 
+        definitions: { '#': { validator: "[0-9]", cardinality: 1}} 
+		});
+   $('.card-cvc').inputmask({ 
+        mask: cvc_nbr, 
+        greedy: false, 
+        definitions: { '#': { validator: "[0-9]", cardinality: 1}} 
+		});
+
+   $('.card-expiry-month').inputmask({ 
+        mask: month_nbr, 
+        greedy: false, 
+        definitions: { '#': { validator: "[0-9]", cardinality: 1}} 
+		});
+    $('.card-expiry-year').inputmask({ 
+        mask: year_nbr, 
+        greedy: false, 
+        definitions: { '#': { validator: "[0-9]", cardinality: 1}} 
+		});				
+		
+  //$('.card-cvc').inputmask('999', { placeholder: 'XXX' });
+  //$('.card-expiry-month').inputmask('99', { placeholder: 'MM' });
+  //$('.card-expiry-year').inputmask('9999', { placeholder: 'YYYY' });
+  if($('input[name=PriceExam]').val()=='0.00'){
+	   //Swal.fire({html:'{{__("Please check the price value")}}',icon:'warning',customClass:'w-auto'});
+	  $(':input[type="submit"]').prop('disabled', true);
+	   //$("#lprice").css("color", 'red');
+	   $("#lprice").removeClass("bg-inf");
+	   $("#lprice").addClass("bg-gradient-danger");
+	   $("#Dprice").show();
+	   //$("#Dprice").css("color", 'red');
+  }
+  
+  
+  /*var $form = $(".require-validation");
+  $('form.require-validation').bind('submit', function(e) {
+	
+    var $form = $(".require-validation"),
+    inputSelector = ['input[type=email]', 'input[type=password]', 'input[type=text]', 'input[type=file]', 'textarea'].join(', '),
+    $inputs = $form.find('.required').find(inputSelector),
+    $errorMessage = $form.find('div.error'),
+    valid = true;
+    $errorMessage.addClass('hide');
+    $('.has-error').removeClass('has-error');
+    $inputs.each(function(i, el) {
+        var $input = $(el);
+		
+        if ($input.val() === '') {
+            $input.parent().addClass('has-error');
+            $errorMessage.removeClass('hide');
+            e.preventDefault();
+        }
+    });
+    if (!$form.data('cc-on-file')) {
+      e.preventDefault();
+      Stripe.setPublishableKey($form.data('stripe-publishable-key'));
+      Stripe.createToken({
+          number: $('.card-number').val(),
+          cvc: $('.card-cvc').val(),
+          exp_month: $('.card-expiry-month').val(),
+          exp_year: $('.card-expiry-year').val()
+      }, stripeResponseHandler);
+    }
+  });*/
+
+  /*function stripeResponseHandler(status, response) {
+      if (response.error) {
+          $('.error')
+              .removeClass('hide')
+              .find('.alert')
+              .text(response.error.message);
+		
+		Swal.fire({html:result,icon:'error',customClass:'w-auto'});
+		console.log(response.error.message);
+      } else {
+          
+          var token = response['id'];
+          $form.find('input[type=text]').empty();
+          $form.append("<input type='hidden' name='stripeToken' value='" + token + "'/>");
+          $form.get(0).submit();
+		  Swal.fire({html:'{{__("Payment Successfull")}}',icon:'success',customClass:'w-auto'});
+
+      }
+  }*/
+});
+</script>
+ @endsection
