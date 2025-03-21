@@ -30,6 +30,5 @@ Homestead.json
 auth.json
 **/libraries/*
 /public/
-/storage/
 l_fixasset.sql
 package-lock.json
