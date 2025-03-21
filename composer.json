@@ -74,6 +74,10 @@
         "preferred-install": "dist",
         "sort-packages": true
     },
+    "storage":  [
+        "mkdir storage",
+        "mkdir storage/framework storage/framework/cache storage/framework/sessions storage/framework/testing storage/framework/views"
+    ],    
     "minimum-stability": "dev",
     "prefer-stable": true
 }
