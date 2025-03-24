@@ -29,6 +29,6 @@ Homestead.json
 .phpactor.json
 auth.json
 **/libraries/*
-/public/
+/public/dist
 l_fixasset.sql
 package-lock.json
