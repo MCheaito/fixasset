@@ -1,5 +1,5 @@
 <?php
 define('ROOT','');
-header('Location: ' . ROOT . '/fixasset/public/index.php');
+header('Location: ' . ROOT . '/public/index.php');
 
 ?>
